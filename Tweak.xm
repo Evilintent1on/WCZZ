@@ -567,6 +567,7 @@ static NSArray *WCZZBuildLogicRows(id obj, long long originalCount, NSMutableArr
     NSMutableArray *folded = [NSMutableArray array];
     NSMutableDictionary *sessionByRow = [NSMutableDictionary dictionaryWithCapacity:(NSUInteger)originalCount];
     NSArray *serviceSessions = WCZZSessionList();
+    NSInteger nilUsernameCount = 0;
     WCZZSetLogicReentry(obj, YES);
 
     for (NSInteger i = 0; i < originalCount; i++) {
@@ -620,6 +621,7 @@ static NSArray *WCZZBuildLogicRows(id obj, long long originalCount, NSMutableArr
 
         if (session) sessionByRow[@(i)] = session;
 
+        if (!username.length) nilUsernameCount++;
         BOOL fold = WCZZIsGroupUsername(username) && !WCZZIsCommonRoom(username) &&
                     WCZZEnabled() && WCZZBool(WCZZGroupEnabledKey, YES);
         if (fold) {
@@ -650,14 +652,25 @@ static NSArray *WCZZBuildLogicRows(id obj, long long originalCount, NSMutableArr
     }];
     visible = [sortedVisible mutableCopy];
 
-    objc_setAssociatedObject(obj, WCZZLogicRowsKey, visible, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(obj, WCZZLogicFoldedKey, folded, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    objc_setAssociatedObject(obj, WCZZLogicOriginalCountKey, @(originalCount), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // 数据还没就绪时（大量 username 取不到）不缓存，下次调用重建，
+    // 避免把"全 nil"的错误结果锁死。阈值：超过一半取不到则视为未就绪。
+    BOOL dataReady = !(originalCount > 0 && nilUsernameCount * 2 >= originalCount);
+    if (dataReady) {
+        objc_setAssociatedObject(obj, WCZZLogicRowsKey, visible, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(obj, WCZZLogicFoldedKey, folded, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(obj, WCZZLogicOriginalCountKey, @(originalCount), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    } else {
+        objc_setAssociatedObject(obj, WCZZLogicRowsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(obj, WCZZLogicFoldedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(obj, WCZZLogicOriginalCountKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
 
-    WCZZLog(@"logic rows rebuilt original=%lld visible=%lu folded=%lu",
+    WCZZLog(@"logic rows rebuilt original=%lld visible=%lu folded=%lu nilUsername=%ld cached=%d",
             originalCount,
             (unsigned long)visible.count,
-            (unsigned long)folded.count);
+            (unsigned long)folded.count,
+            (long)nilUsernameCount,
+            dataReady);
     if (WCZZDebugEnabled()) {
         NSUInteger limit = MIN((NSUInteger)folded.count, (NSUInteger)12);
         NSMutableArray *names = [NSMutableArray arrayWithCapacity:limit];
