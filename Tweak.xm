@@ -566,73 +566,38 @@ static NSArray *WCZZBuildLogicRows(id obj, long long originalCount, NSMutableArr
     NSMutableArray *visible = [NSMutableArray arrayWithCapacity:(NSUInteger)originalCount];
     NSMutableArray *folded = [NSMutableArray array];
     NSMutableDictionary *sessionByRow = [NSMutableDictionary dictionaryWithCapacity:(NSUInteger)originalCount];
-    NSArray *serviceSessions = WCZZSessionList();
+
+    // MiYou 方式：以 MMNewSessionMgr.GetSessionInfoList 为单一可信快照，
+    // 不再逐行调 getSessionInfoAtIndexPath / getCellDataAtIndexPath。
+    // MainFrame 展示的 session 顺序与该列表一致，下标即行号。
+    NSArray *snapshot = WCZZSessionList();
     NSInteger nilUsernameCount = 0;
-    WCZZSetLogicReentry(obj, YES);
+    BOOL snapshotValid = ([snapshot isKindOfClass:[NSArray class]] &&
+                          (NSInteger)snapshot.count == originalCount);
 
-    for (NSInteger i = 0; i < originalCount; i++) {
-        NSIndexPath *ip = [NSIndexPath indexPathForRow:i inSection:0];
-        id session = nil;
-        id cellData = nil;
-        NSString *username = nil;
-
-        // On this 8.0.75 build getSessionInfoAtIndexPath: can return nil even
-        // though the row is real.  Prefer the session object, then fall back to
-        // the row's cell-data username, and finally to MMNewSessionMgr's
-        // GetSessionInfoList.  The previous implementation treated nil as a
-        // non-group row, which is why the group assistant never folded anything.
-        @try {
-            session = [(MainFrameLogicController *)obj getSessionInfoAtIndexPath:ip];
-        } @catch (__unused NSException *e) {}
-
-        if (session) {
-            username = WCZZUsername(session);
-        }
-
-        if (!username.length) {
-            @try {
-                cellData = [(MainFrameLogicController *)obj getCellDataAtIndexPath:ip];
-            } @catch (__unused NSException *e) {}
-            id cellUsername = WCZZValue(cellData, @"userName");
-            if ([cellUsername isKindOfClass:[NSString class]]) username = cellUsername;
-        }
-
-        if (!session && username.length) {
-            for (id candidate in serviceSessions) {
-                if ([WCZZUsername(candidate) isEqualToString:username]) {
-                    session = candidate;
-                    break;
-                }
+    if (snapshotValid) {
+        for (NSInteger i = 0; i < originalCount; i++) {
+            id session = snapshot[(NSUInteger)i];
+            NSString *username = WCZZUsername(session);
+            if (session) sessionByRow[@(i)] = session;
+            if (!username.length) nilUsernameCount++;
+            BOOL fold = WCZZIsGroupUsername(username) && !WCZZIsCommonRoom(username) &&
+                        WCZZEnabled() && WCZZBool(WCZZGroupEnabledKey, YES);
+            if (fold) {
+                [folded addObject:@(i)];
+            } else {
+                [visible addObject:@(i)];
             }
         }
-
-        if (!session && username.length) {
-            session = WCZZSessionByUsername(username);
-        }
-
-        if (!username.length && i < (NSInteger)serviceSessions.count) {
-            id fallback = serviceSessions[(NSUInteger)i];
-            NSString *fallbackUsername = WCZZUsername(fallback);
-            if (fallbackUsername.length) {
-                session = fallback;
-                username = fallbackUsername;
-            }
-        }
-
-        if (session) sessionByRow[@(i)] = session;
-
-        if (!username.length) nilUsernameCount++;
-        BOOL fold = WCZZIsGroupUsername(username) && !WCZZIsCommonRoom(username) &&
-                    WCZZEnabled() && WCZZBool(WCZZGroupEnabledKey, YES);
-        if (fold) {
-            [folded addObject:@(i)];
-        } else {
+    } else {
+        // 快照数量对不上（数据未就绪或正在同步），本次不折叠、不缓存，下次重建。
+        WCZZLog(@"snapshot mismatch original=%lld snapshot=%lu, skip fold this round",
+                originalCount, (unsigned long)snapshot.count);
+        for (NSInteger i = 0; i < originalCount; i++) {
             [visible addObject:@(i)];
         }
-
+        nilUsernameCount = originalCount;
     }
-
-    WCZZSetLogicReentry(obj, NO);
 
     // Keep folded rows untouched. Reorder only visible rows by unread count
     // descending. The original row number is the secondary key, preserving
