@@ -719,6 +719,37 @@ static void WCZZSetKVCObject(id obj, NSString *key, id value) {
     if (ivar && value) object_setIvar(obj, ivar, value);
 }
 
+// 8.0.75 上 MMSessionInfo.m_nsUserName 可能是 readonly，KVC 写失败。
+// 暴力扫描所有 ivar，找名字含 username（不区分大小写）的 NSString ivar 来写。
+static BOOL WCZZSetUsernameIvar(id obj, NSString *username) {
+    if (!obj || !username.length) return NO;
+    unsigned int count = 0;
+    Ivar *ivars = class_copyIvarList(object_getClass(obj), &count);
+    BOOL done = NO;
+    for (unsigned int i = 0; i < count && !done; i++) {
+        const char *name = ivar_getName(ivars[i]);
+        const char *type = ivar_getTypeEncoding(ivars[i]);
+        if (!name || !type) continue;
+        NSString *n = [NSString stringWithUTF8String:name];
+        NSString *lower = n.lowercaseString;
+        // 只写 NSString* 类型的 ivar，避免破坏其他类型
+        BOOL isString = (type[0] == '@');
+        if (isString && [lower containsString:@"username"]) {
+            @try {
+                object_setIvar(obj, ivars[i], username);
+                // 验证是否真的写进去了
+                id v = object_getIvar(obj, ivars[i]);
+                if ([v isKindOfClass:[NSString class]] && [v isEqualToString:username]) {
+                    WCZZLog(@"username ivar set via %@: %@", n, username);
+                    done = YES;
+                }
+            } @catch (__unused NSException *e) {}
+        }
+    }
+    if (ivars) free(ivars);
+    return done;
+}
+
 static id WCZZMakeHelperSession(id obj) {
     id cached = objc_getAssociatedObject(obj, WCZZHelperSessionKey);
     if (cached && [WCZZUsername(cached) isEqualToString:WCZZGroupUserName]) return cached;
@@ -773,6 +804,9 @@ static id WCZZMakeHelperSession(id obj) {
 
     WCZZSetKVCObject(helper, @"m_nsUserName", WCZZGroupUserName);
     WCZZSetKVCObject(helper, @"m_userName", WCZZGroupUserName);
+    if (![WCZZUsername(helper) isEqualToString:WCZZGroupUserName]) {
+        WCZZSetUsernameIvar(helper, WCZZGroupUserName);
+    }
     WCZZSetKVCObject(helper, @"m_uUnReadCount", @(MIN(unreadTotal, UINT_MAX)));
     WCZZSetKVCObject(helper, @"m_unreadCount", @(MIN(unreadTotal, UINT_MAX)));
     if (latestSession) {
