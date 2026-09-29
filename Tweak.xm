@@ -1469,8 +1469,9 @@ static void WCZZReloadMainList(void) {
     }
     NSInteger helperRow = WCZZHelperRowForRows(rows);
     if (folded.count > 0 && ip.row == helperRow) {
-        // Centralized in MainFrameLogicController -onDidSelectCellAt:.
-        %orig(indexPath, tableView);
+        // 8.0.75 的原生 handleSelectIndexPath 不会回调 onDidSelectCellAt，
+        // 直接 push 群助手页，不依赖原生链路（WCZZPushGroupHelper 自带 0.6s 防重）。
+        WCZZPushGroupHelper(self);
         return;
     }
     NSIndexPath *mapped = logic ? WCZZOriginalIPForLogicRow(logic, ip) : nil;
