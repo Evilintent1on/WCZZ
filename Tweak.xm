@@ -130,13 +130,6 @@ static NSArray *WCZZSessionList(void) {
     id list = ((id (*)(id, SEL))objc_msgSend)(mgr, listSel);
     return [list isKindOfClass:[NSArray class]] ? list : @[];
 }
-static id WCZZSessionByUsername(NSString *username) {
-    if (![username isKindOfClass:[NSString class]] || [username length] == 0) return nil;
-    for (id session in WCZZSessionList()) {
-        if ([WCZZUsername(session) isEqualToString:username]) return session;
-    }
-    return nil;
-}
 static void WCZZMarkRead(NSString *username) {
     if (!username.length) return;
     Class ctxClass = objc_getClass("MMContext");
