@@ -142,9 +142,12 @@ static NSMutableDictionary *MMWCZZEntryWithTitle(NSString *title, BOOL removed) 
 static UIBarButtonItem *MMBlackBackButton(UIViewController *vc, SEL action) {
     UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
     UIImage *sysChevron = vc.navigationController.navigationBar.backIndicatorImage;
+    UIColor *chevronColor = nil;
+    if (@available(iOS 13.0, *)) chevronColor = [UIColor labelColor];
+    else chevronColor = [UIColor blackColor];
     if (sysChevron) {
         [btn setImage:[sysChevron imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate] forState:UIControlStateNormal];
-        btn.tintColor = [UIColor blackColor];
+        btn.tintColor = chevronColor;
     } else {
         CGSize size = CGSizeMake(12, 20);
         UIGraphicsBeginImageContextWithOptions(size, NO, 0.0);
@@ -156,7 +159,7 @@ static UIBarButtonItem *MMBlackBackButton(UIViewController *vc, SEL action) {
         p.lineWidth = lw;
         p.lineCapStyle = kCGLineCapRound;
         p.lineJoinStyle = kCGLineJoinRound;
-        [[UIColor blackColor] setStroke];
+        [chevronColor setStroke];
         [p stroke];
         UIImage *chevron = UIGraphicsGetImageFromCurrentImageContext();
         UIGraphicsEndImageContext();
