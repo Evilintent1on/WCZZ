@@ -3,7 +3,6 @@
 #import "MessageMenuConfig.h"
 #import "MessageMenuBackup.h"
 #import "MessageMenuSettingsController.h"
-#import "WCHookSettingsManager.h"
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <Foundation/Foundation.h>
