@@ -14,6 +14,7 @@
 @interface WCZZCardBgView : UIView
 @property (nonatomic, assign) UIRectCorner corners;
 @property (nonatomic, assign) BOOL showSeparator;
+@property (nonatomic, strong) UIColor *cardColor;
 @end
 @implementation WCZZCardBgView
 - (void)layoutSubviews {
@@ -22,10 +23,11 @@
     if (!card) {
         card = [[UIView alloc] init];
         card.tag = 999;
-        if (@available(iOS 13.0, *)) card.backgroundColor = [UIColor systemBackgroundColor];
-        else card.backgroundColor = [UIColor whiteColor];
         [self addSubview:card];
     }
+    if (self.cardColor) card.backgroundColor = self.cardColor;
+    else if (@available(iOS 13.0, *)) card.backgroundColor = [UIColor systemBackgroundColor];
+    else card.backgroundColor = [UIColor whiteColor];
     CGFloat inset = 16.0;
     card.frame = CGRectMake(inset, 0, self.bounds.size.width - inset*2, self.bounds.size.height);
     card.layer.cornerRadius = 25.0;
@@ -58,14 +60,24 @@
 
 static void WCZZApplyCard(UITableViewCell *cell, UITableView *tv, NSIndexPath *ip) {
     NSInteger rows = [tv numberOfRowsInSection:ip.section];
+    UIRectCorner corners;
+    if (ip.row == 0 && ip.row == rows-1) corners = UIRectCornerAllCorners;
+    else if (ip.row == 0) corners = UIRectCornerTopLeft|UIRectCornerTopRight;
+    else if (ip.row == rows-1) corners = UIRectCornerBottomLeft|UIRectCornerBottomRight;
+    else corners = 0;
+    BOOL showSep = (ip.row < rows-1);
     WCZZCardBgView *bg = [[WCZZCardBgView alloc] init];
     bg.backgroundColor = [UIColor clearColor];
-    if (ip.row == 0 && ip.row == rows-1) bg.corners = UIRectCornerAllCorners;
-    else if (ip.row == 0) bg.corners = UIRectCornerTopLeft|UIRectCornerTopRight;
-    else if (ip.row == rows-1) bg.corners = UIRectCornerBottomLeft|UIRectCornerBottomRight;
-    else bg.corners = 0;
-    bg.showSeparator = (ip.row < rows-1);
+    bg.corners = corners;
+    bg.showSeparator = showSep;
     cell.backgroundView = bg;
+    WCZZCardBgView *selBg = [[WCZZCardBgView alloc] init];
+    selBg.backgroundColor = [UIColor clearColor];
+    selBg.corners = corners;
+    selBg.showSeparator = showSep;
+    if (@available(iOS 13.0, *)) selBg.cardColor = [UIColor systemGray5Color];
+    else selBg.cardColor = [UIColor colorWithWhite:0.92 alpha:1.0];
+    cell.selectedBackgroundView = selBg;
     cell.backgroundColor = [UIColor clearColor];
 }
 #import <objc/message.h>
@@ -100,7 +112,7 @@ static id WCZZValue(id obj, NSString *key) {
 - (instancetype)init {
     return [super initWithStyle:UITableViewStyleGrouped];
 }
-- (void)viewDidLoad { [super viewDidLoad]; self.title = @"WCZZ"; self.tableView.tableFooterView = [UIView new]; self.tableView.rowHeight = 60; self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
+- (void)viewDidLoad { [super viewDidLoad]; self.title = @"WCZZ"; self.tableView.tableFooterView = [UIView new]; self.tableView.rowHeight = 55; self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
         self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
@@ -125,7 +137,7 @@ static id WCZZValue(id obj, NSString *key) {
         c.textLabel.text=@"红包详情"; c.selectionStyle=UITableViewCellSelectionStyleNone;
         UISwitch *sw=[UISwitch new]; sw.tag=100; sw.on=WCZZBool(WCZZRedDetailKey,YES); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
         sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
-        [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-16],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
+        [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else {
         c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     }

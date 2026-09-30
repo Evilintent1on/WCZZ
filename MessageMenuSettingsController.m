@@ -10,6 +10,7 @@
 @interface MMCardBgView : UIView
 @property (nonatomic, assign) UIRectCorner corners;
 @property (nonatomic, assign) BOOL showSeparator;
+@property (nonatomic, strong) UIColor *cardColor;
 @end
 @implementation MMCardBgView
 - (void)layoutSubviews {
@@ -18,10 +19,11 @@
     if (!card) {
         card = [[UIView alloc] init];
         card.tag = 999;
-        if (@available(iOS 13.0, *)) card.backgroundColor = [UIColor systemBackgroundColor];
-        else card.backgroundColor = [UIColor whiteColor];
         [self addSubview:card];
     }
+    if (self.cardColor) card.backgroundColor = self.cardColor;
+    else if (@available(iOS 13.0, *)) card.backgroundColor = [UIColor systemBackgroundColor];
+    else card.backgroundColor = [UIColor whiteColor];
     CGFloat inset = 16.0;
     card.frame = CGRectMake(inset, 0, self.bounds.size.width - inset*2, self.bounds.size.height);
     card.layer.cornerRadius = 25.0;
@@ -54,14 +56,24 @@
 
 static void MMApplyCard(UITableViewCell *cell, UITableView *tv, NSIndexPath *ip) {
     NSInteger rows = [tv numberOfRowsInSection:ip.section];
+    UIRectCorner corners;
+    if (ip.row == 0 && ip.row == rows-1) corners = UIRectCornerAllCorners;
+    else if (ip.row == 0) corners = UIRectCornerTopLeft|UIRectCornerTopRight;
+    else if (ip.row == rows-1) corners = UIRectCornerBottomLeft|UIRectCornerBottomRight;
+    else corners = 0;
+    BOOL showSep = (ip.row < rows-1);
     MMCardBgView *bg = [[MMCardBgView alloc] init];
     bg.backgroundColor = [UIColor clearColor];
-    if (ip.row == 0 && ip.row == rows-1) bg.corners = UIRectCornerAllCorners;
-    else if (ip.row == 0) bg.corners = UIRectCornerTopLeft|UIRectCornerTopRight;
-    else if (ip.row == rows-1) bg.corners = UIRectCornerBottomLeft|UIRectCornerBottomRight;
-    else bg.corners = 0;
-    bg.showSeparator = (ip.row < rows-1);
+    bg.corners = corners;
+    bg.showSeparator = showSep;
     cell.backgroundView = bg;
+    MMCardBgView *selBg = [[MMCardBgView alloc] init];
+    selBg.backgroundColor = [UIColor clearColor];
+    selBg.corners = corners;
+    selBg.showSeparator = showSep;
+    if (@available(iOS 13.0, *)) selBg.cardColor = [UIColor systemGray5Color];
+    else selBg.cardColor = [UIColor colorWithWhite:0.92 alpha:1.0];
+    cell.selectedBackgroundView = selBg;
     cell.backgroundColor = [UIColor clearColor];
 }
 
@@ -154,7 +166,7 @@ static NSMutableDictionary *MMWCZZEntryWithTitle(NSString *title, BOOL removed) 
     [super viewDidLoad];
     self.title = @"已移除菜单";
     self.tableView.tableFooterView = [UIView new];
-    self.tableView.rowHeight = 60;
+    self.tableView.rowHeight = 55;
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
@@ -268,7 +280,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     [super viewDidLoad];
     self.title = @"长按菜单";
     self.tableView.tableFooterView = [UIView new];
-    self.tableView.rowHeight = 60;
+    self.tableView.rowHeight = 55;
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
@@ -382,7 +394,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
             [sw addTarget:self action:@selector(switchChanged:) forControlEvents:UIControlEventValueChanged];
             sw.translatesAutoresizingMaskIntoConstraints = NO;
             [cell.contentView addSubview:sw];
-            [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-16],[sw.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]]];
+            [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]]];
         } else {
             cell.textLabel.text = @"自定义排序";
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
@@ -393,7 +405,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
             [sw addTarget:self action:@selector(switchChanged:) forControlEvents:UIControlEventValueChanged];
             sw.translatesAutoresizingMaskIntoConstraints = NO;
             [cell.contentView addSubview:sw];
-            [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-16],[sw.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]]];
+            [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]]];
             if (!self.enabled) cell.textLabel.textColor = [UIColor secondaryLabelColor];
         }
         return cell;
@@ -414,7 +426,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
             [sw addTarget:self action:@selector(entrySwitchChanged:) forControlEvents:UIControlEventValueChanged];
             sw.translatesAutoresizingMaskIntoConstraints = NO;
             [cell.contentView addSubview:sw];
-            [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-16],[sw.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]]];
+            [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]]];
         }
         if (!self.enabled) {
             cell.textLabel.textColor = [UIColor secondaryLabelColor];
