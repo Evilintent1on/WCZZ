@@ -71,14 +71,14 @@ static void WCHookCollectMessageCellViewsFromView(UIView *root, NSMutableArray<U
     NSMutableArray<UIView *> *collected = [NSMutableArray array];
     UITableViewCell *tableViewCell = WCHookFindContainingTableViewCell(view);
     if (!tableViewCell) {
-        return @[view];
+        return @[(UIView *)view];
     }
 
     id messageIdentifier = WCHookMessageIdentifierForView(view);
     if (!messageIdentifier) {
         WCHookCollectMessageCellViewsFromView(tableViewCell.contentView, collected);
-        if (collected.count == 0 || ![collected containsObject:view]) {
-            [collected addObject:view];
+        if (collected.count == 0 || ![collected containsObject:(UIView *)view]) {
+            [collected addObject:(UIView *)view];
         }
         return collected.copy;
     }
@@ -86,8 +86,8 @@ static void WCHookCollectMessageCellViewsFromView(UIView *root, NSMutableArray<U
     UITableView *tableView = WCHookFindContainingTableView(tableViewCell);
     if (!tableView) {
         WCHookCollectMessageCellViewsFromView(tableViewCell.contentView, collected);
-        if (collected.count == 0 || ![collected containsObject:view]) {
-            [collected addObject:view];
+        if (collected.count == 0 || ![collected containsObject:(UIView *)view]) {
+            [collected addObject:(UIView *)view];
         }
         return collected.copy;
     }
@@ -120,8 +120,8 @@ static void WCHookCollectMessageCellViewsFromView(UIView *root, NSMutableArray<U
         }
     }
 
-    if (collected.count == 0 || ![collected containsObject:view]) {
-        [collected addObject:view];
+    if (collected.count == 0 || ![collected containsObject:(UIView *)view]) {
+        [collected addObject:(UIView *)view];
     }
 
     return collected.copy;
