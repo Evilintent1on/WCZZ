@@ -45,34 +45,6 @@ static NSArray<NSDictionary *> *WCHookSettingsConfiguration(void) {
                 WCHookSettingConfigKeyFooter : @"",
                 WCHookSettingConfigKeyItems : @[
                     @{
-                        WCHookSettingConfigKeyIdentifier : @"WCHookSwipeLeftOther",
-                        WCHookSettingConfigKeyType : WCHookSettingItemTypeNavigation,
-                        WCHookSettingConfigKeyTitle : @"对方消息 · 左滑",
-                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.swipeLeftOther",
-                        WCHookSettingConfigKeyDefaultValue : @1,
-                    },
-                    @{
-                        WCHookSettingConfigKeyIdentifier : @"WCHookSwipeRightOther",
-                        WCHookSettingConfigKeyType : WCHookSettingItemTypeNavigation,
-                        WCHookSettingConfigKeyTitle : @"对方消息 · 右滑",
-                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.swipeRightOther",
-                        WCHookSettingConfigKeyDefaultValue : @0,
-                    },
-                    @{
-                        WCHookSettingConfigKeyIdentifier : @"WCHookSwipeLeftSelf",
-                        WCHookSettingConfigKeyType : WCHookSettingItemTypeNavigation,
-                        WCHookSettingConfigKeyTitle : @"我方消息 · 左滑",
-                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.swipeLeftSelf",
-                        WCHookSettingConfigKeyDefaultValue : @2,
-                    },
-                    @{
-                        WCHookSettingConfigKeyIdentifier : @"WCHookSwipeRightSelf",
-                        WCHookSettingConfigKeyType : WCHookSettingItemTypeNavigation,
-                        WCHookSettingConfigKeyTitle : @"我方消息 · 右滑",
-                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.swipeRightSelf",
-                        WCHookSettingConfigKeyDefaultValue : @1,
-                    },
-                    @{
                         WCHookSettingConfigKeyIdentifier : @"WCHookTapReferJump",
                         WCHookSettingConfigKeyType : WCHookSettingItemTypeToggle,
                         WCHookSettingConfigKeyTitle : @"引用消息点击跳转",
