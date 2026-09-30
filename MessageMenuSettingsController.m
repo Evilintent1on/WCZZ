@@ -3,6 +3,67 @@
 #import "MessageMenuBackup.h"
 
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <QuartzCore/QuartzCore.h>
+
+#pragma mark - Card background (25pt radius)
+
+@interface MMCardBgView : UIView
+@property (nonatomic, assign) UIRectCorner corners;
+@property (nonatomic, assign) BOOL showSeparator;
+@end
+@implementation MMCardBgView
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    UIView *card = [self viewWithTag:999];
+    if (!card) {
+        card = [[UIView alloc] init];
+        card.tag = 999;
+        if (@available(iOS 13.0, *)) card.backgroundColor = [UIColor systemBackgroundColor];
+        else card.backgroundColor = [UIColor whiteColor];
+        [self addSubview:card];
+    }
+    CGFloat inset = 16.0;
+    card.frame = CGRectMake(inset, 0, self.bounds.size.width - inset*2, self.bounds.size.height);
+    card.layer.cornerRadius = 25.0;
+    card.layer.masksToBounds = YES;
+    if (@available(iOS 11.0, *)) {
+        CACornerMask mask = 0;
+        if (self.corners & UIRectCornerTopLeft) mask |= kCALayerMinXMinYCorner;
+        if (self.corners & UIRectCornerTopRight) mask |= kCALayerMaxXMinYCorner;
+        if (self.corners & UIRectCornerBottomLeft) mask |= kCALayerMinXMaxYCorner;
+        if (self.corners & UIRectCornerBottomRight) mask |= kCALayerMaxXMaxYCorner;
+        card.layer.maskedCorners = mask;
+    }
+    UIView *sep = [self viewWithTag:998];
+    if (self.showSeparator) {
+        if (!sep) {
+            sep = [[UIView alloc] init];
+            sep.tag = 998;
+            if (@available(iOS 13.0, *)) sep.backgroundColor = [UIColor separatorColor];
+            else sep.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0];
+            [self addSubview:sep];
+        }
+        CGFloat sepInset = 32.0;
+        sep.frame = CGRectMake(sepInset, self.bounds.size.height - 0.5, self.bounds.size.width - sepInset - 16.0, 0.5);
+        sep.hidden = NO;
+    } else if (sep) {
+        sep.hidden = YES;
+    }
+}
+@end
+
+static void MMApplyCard(UITableViewCell *cell, UITableView *tv, NSIndexPath *ip) {
+    NSInteger rows = [tv numberOfRowsInSection:ip.section];
+    MMCardBgView *bg = [[MMCardBgView alloc] init];
+    bg.backgroundColor = [UIColor clearColor];
+    if (ip.row == 0 && ip.row == rows-1) bg.corners = UIRectCornerAllCorners;
+    else if (ip.row == 0) bg.corners = UIRectCornerTopLeft|UIRectCornerTopRight;
+    else if (ip.row == rows-1) bg.corners = UIRectCornerBottomLeft|UIRectCornerBottomRight;
+    else bg.corners = 0;
+    bg.showSeparator = (ip.row < rows-1);
+    cell.backgroundView = bg;
+    cell.backgroundColor = [UIColor clearColor];
+}
 
 // WeChat-native settings style: grouped table, white cells, system fonts,
 // standard switches. No custom colors or icons.
@@ -81,11 +142,7 @@ static NSMutableDictionary *MMWCZZEntryWithTitle(NSString *title, BOOL removed) 
 
 - (instancetype)initWithEntries:(NSMutableArray<NSMutableDictionary *> *)entries
                   changeHandler:(void (^)(void))changeHandler {
-    if (@available(iOS 13.0, *)) {
-        self = [super initWithStyle:UITableViewStyleInsetGrouped];
-    } else {
-        self = [super initWithStyle:UITableViewStyleGrouped];
-    }
+    self = [super initWithStyle:UITableViewStyleGrouped];
     if (self) {
         _allEntries = entries;
         _changeHandler = [changeHandler copy];
@@ -98,6 +155,7 @@ static NSMutableDictionary *MMWCZZEntryWithTitle(NSString *title, BOOL removed) 
     self.title = @"已移除菜单";
     self.tableView.tableFooterView = [UIView new];
     self.tableView.rowHeight = 60;
+    self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
         self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
@@ -126,6 +184,8 @@ static NSMutableDictionary *MMWCZZEntryWithTitle(NSString *title, BOOL removed) 
     NSArray<NSDictionary *> *removed = [self removedEntries];
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"mm.removed"];
     if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"mm.removed"];
+    MMApplyCard(cell, tableView, indexPath);
+    cell.layoutMargins = UIEdgeInsetsMake(0, 32, 0, 16);
     if (!removed.count) {
         cell.textLabel.text = @"暂无已移除菜单";
         cell.textLabel.textColor = [UIColor secondaryLabelColor];
@@ -199,11 +259,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
 @implementation MessageMenuSettingsController
 
 - (instancetype)init {
-    if (@available(iOS 13.0, *)) {
-        self = [super initWithStyle:UITableViewStyleInsetGrouped];
-    } else {
-        self = [super initWithStyle:UITableViewStyleGrouped];
-    }
+    self = [super initWithStyle:UITableViewStyleGrouped];
     if (self) [self reloadConfig];
     return self;
 }
@@ -213,6 +269,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     self.title = @"长按菜单";
     self.tableView.tableFooterView = [UIView new];
     self.tableView.rowHeight = 60;
+    self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
         self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
@@ -312,6 +369,8 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     cell.userInteractionEnabled = YES;
     cell.showsReorderControl = NO;
     for (UIView *v in [cell.contentView.subviews copy]) { if ([v isKindOfClass:[UISwitch class]]) [v removeFromSuperview]; }
+    MMApplyCard(cell, tableView, indexPath);
+    cell.layoutMargins = UIEdgeInsetsMake(0, 32, 0, 16);
 
     if (indexPath.section == MMSectionGeneral) {
         if (indexPath.row == 0) {

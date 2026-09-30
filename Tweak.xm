@@ -8,6 +8,66 @@
 #import <QuartzCore/QuartzCore.h>
 #import <Foundation/Foundation.h>
 #import <stdarg.h>
+
+#pragma mark - Card background (25pt radius)
+
+@interface WCZZCardBgView : UIView
+@property (nonatomic, assign) UIRectCorner corners;
+@property (nonatomic, assign) BOOL showSeparator;
+@end
+@implementation WCZZCardBgView
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    UIView *card = [self viewWithTag:999];
+    if (!card) {
+        card = [[UIView alloc] init];
+        card.tag = 999;
+        if (@available(iOS 13.0, *)) card.backgroundColor = [UIColor systemBackgroundColor];
+        else card.backgroundColor = [UIColor whiteColor];
+        [self addSubview:card];
+    }
+    CGFloat inset = 16.0;
+    card.frame = CGRectMake(inset, 0, self.bounds.size.width - inset*2, self.bounds.size.height);
+    card.layer.cornerRadius = 25.0;
+    card.layer.masksToBounds = YES;
+    if (@available(iOS 11.0, *)) {
+        CACornerMask mask = 0;
+        if (self.corners & UIRectCornerTopLeft) mask |= kCALayerMinXMinYCorner;
+        if (self.corners & UIRectCornerTopRight) mask |= kCALayerMaxXMinYCorner;
+        if (self.corners & UIRectCornerBottomLeft) mask |= kCALayerMinXMaxYCorner;
+        if (self.corners & UIRectCornerBottomRight) mask |= kCALayerMaxXMaxYCorner;
+        card.layer.maskedCorners = mask;
+    }
+    UIView *sep = [self viewWithTag:998];
+    if (self.showSeparator) {
+        if (!sep) {
+            sep = [[UIView alloc] init];
+            sep.tag = 998;
+            if (@available(iOS 13.0, *)) sep.backgroundColor = [UIColor separatorColor];
+            else sep.backgroundColor = [UIColor colorWithWhite:0.85 alpha:1.0];
+            [self addSubview:sep];
+        }
+        CGFloat sepInset = 32.0;
+        sep.frame = CGRectMake(sepInset, self.bounds.size.height - 0.5, self.bounds.size.width - sepInset - 16.0, 0.5);
+        sep.hidden = NO;
+    } else if (sep) {
+        sep.hidden = YES;
+    }
+}
+@end
+
+static void WCZZApplyCard(UITableViewCell *cell, UITableView *tv, NSIndexPath *ip) {
+    NSInteger rows = [tv numberOfRowsInSection:ip.section];
+    WCZZCardBgView *bg = [[WCZZCardBgView alloc] init];
+    bg.backgroundColor = [UIColor clearColor];
+    if (ip.row == 0 && ip.row == rows-1) bg.corners = UIRectCornerAllCorners;
+    else if (ip.row == 0) bg.corners = UIRectCornerTopLeft|UIRectCornerTopRight;
+    else if (ip.row == rows-1) bg.corners = UIRectCornerBottomLeft|UIRectCornerBottomRight;
+    else bg.corners = 0;
+    bg.showSeparator = (ip.row < rows-1);
+    cell.backgroundView = bg;
+    cell.backgroundColor = [UIColor clearColor];
+}
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import <limits.h>
@@ -38,10 +98,9 @@ static id WCZZValue(id obj, NSString *key) {
 @interface WCZZSettingsViewController : UITableViewController @end
 @implementation WCZZSettingsViewController
 - (instancetype)init {
-    if (@available(iOS 13.0, *)) return [super initWithStyle:UITableViewStyleInsetGrouped];
     return [super initWithStyle:UITableViewStyleGrouped];
 }
-- (void)viewDidLoad { [super viewDidLoad]; self.title = @"WCZZ"; self.tableView.tableFooterView = [UIView new]; self.tableView.rowHeight = 60;
+- (void)viewDidLoad { [super viewDidLoad]; self.title = @"WCZZ"; self.tableView.tableFooterView = [UIView new]; self.tableView.rowHeight = 60; self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
         self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
@@ -60,6 +119,8 @@ static id WCZZValue(id obj, NSString *key) {
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"wczz.setting"]; if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"wczz.setting"];
     c.accessoryView = nil; c.accessoryType = UITableViewCellAccessoryNone; c.detailTextLabel.text = nil; c.selectionStyle=UITableViewCellSelectionStyleDefault;
     for (UIView *v in [c.contentView.subviews copy]) { if ([v isKindOfClass:[UISwitch class]]) [v removeFromSuperview]; }
+    WCZZApplyCard(c, tv, ip);
+    c.layoutMargins = UIEdgeInsetsMake(0, 32, 0, 16);
     if (ip.section == 0) {
         c.textLabel.text=@"红包详情"; c.selectionStyle=UITableViewCellSelectionStyleNone;
         UISwitch *sw=[UISwitch new]; sw.tag=100; sw.on=WCZZBool(WCZZRedDetailKey,YES); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
