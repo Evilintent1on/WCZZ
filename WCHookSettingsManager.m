@@ -304,7 +304,7 @@ static NSArray<NSDictionary *> *WCHookSettingsConfiguration(void) {
         return [WCHookSettingItem navigationItemWithIdentifier:identifier
                                                          title:title
                                                         detail:detail
-                                                 actionHandler:nil];
+                                                 actionHandler:^{}];
     }
 
     return nil;
