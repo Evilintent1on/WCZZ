@@ -757,10 +757,6 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
 
 %new
 - (void)wchook_triggerQuoteReply {
-    if (![self respondsToSelector:@selector(onShowMsgReplyMenuItem:)]) {
-        return;
-    }
-
     // 如果开启了引用并艾特，先获取发送者信息
     NSString *atUsername = nil;
     NSString *atNickname = nil;
@@ -768,36 +764,56 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
         @try {
             id messageWrap = nil;
             if ([self respondsToSelector:@selector(messageWrap)]) {
-                messageWrap = [self performSelector:@selector(messageWrap)];
+                messageWrap = ((id (*)(id, SEL))objc_msgSend)(self, @selector(messageWrap));
             } else if ([self respondsToSelector:@selector(getMessageWrap)]) {
-                messageWrap = [self performSelector:@selector(getMessageWrap)];
+                messageWrap = ((id (*)(id, SEL))objc_msgSend)(self, @selector(getMessageWrap));
             }
             if (messageWrap) {
                 if ([messageWrap respondsToSelector:@selector(fromUsrName)]) {
-                    atUsername = [messageWrap performSelector:@selector(fromUsrName)];
+                    atUsername = ((id (*)(id, SEL))objc_msgSend)(messageWrap, @selector(fromUsrName));
                 }
                 // 尝试获取昵称用于显示
                 if ([self respondsToSelector:@selector(getContactDisplayName)]) {
-                    atNickname = [self performSelector:@selector(getContactDisplayName)];
+                    atNickname = ((id (*)(id, SEL))objc_msgSend)(self, @selector(getContactDisplayName));
                 }
             }
         } @catch (__unused NSException *exception) {
         }
     }
 
-    dispatch_async(dispatch_get_main_queue(), ^{
-      @try {
-          [self onShowMsgReplyMenuItem:nil];
-      } @catch (__unused NSException *exception) {
-      }
+    // 尝试多个引用相关的 selector（best-effort）
+    NSArray *selectors = @[@"onShowMsgReplyMenuItem:", @"onReplyMsg:", @"onQuoteMsg:", @"showReplyMenu"];
+    BOOL triggered = NO;
+    for (NSString *selName in selectors) {
+        SEL sel = NSSelectorFromString(selName);
+        if ([self respondsToSelector:sel]) {
+            @try {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    @try {
+                        if ([selName hasSuffix:@":"]) {
+                            ((void (*)(id, SEL, id))objc_msgSend)(self, sel, nil);
+                        } else {
+                            ((void (*)(id, SEL))objc_msgSend)(self, sel);
+                        }
+                    } @catch (__unused NSException *exception) {
+                    }
+                });
+                triggered = YES;
+                break;
+            } @catch (__unused NSException *exception) {
+            }
+        }
+    }
+    if (!triggered) {
+        return;
+    }
 
-      // 引用触发后，插入艾特
-      if (atUsername.length > 0) {
+    // 引用触发后，插入艾特
+    if (atUsername.length > 0) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-          [self wchook_insertAtMention:atUsername nickname:atNickname];
+            [self wchook_insertAtMention:atUsername nickname:atNickname];
         });
-      }
-    });
+    }
 }
 
 %new
