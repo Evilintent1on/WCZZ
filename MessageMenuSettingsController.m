@@ -174,12 +174,6 @@ static UIBarButtonItem *MMBlackBackButton(id target, SEL action) {
 
 @implementation MMWCZZRemovedItemsController
 
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.navigationItem.hidesBackButton = YES;
-    self.navigationItem.leftBarButtonItem = MMBlackBackButton(self, @selector(mm_backTapped));
-}
-
 - (void)mm_backTapped {
     [self.navigationController popViewControllerAnimated:YES];
 }
@@ -200,6 +194,8 @@ static UIBarButtonItem *MMBlackBackButton(id target, SEL action) {
     self.tableView.tableFooterView = [UIView new];
     self.tableView.rowHeight = 55;
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
+    self.navigationItem.hidesBackButton = YES;
+    self.navigationItem.leftBarButtonItem = MMBlackBackButton(self, @selector(mm_backTapped));
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
         self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
