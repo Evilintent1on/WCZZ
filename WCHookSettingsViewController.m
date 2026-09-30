@@ -34,9 +34,11 @@
     }
 
     UITableView *tableView = self.tableManager.tableView;
-    UIColor *backgroundColor = [UIColor whiteColor];
+    UIColor *backgroundColor;
     if (@available(iOS 13.0, *)) {
-        backgroundColor = [UIColor systemBackgroundColor];
+        backgroundColor = [UIColor systemGroupedBackgroundColor];
+    } else {
+        backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
     }
 
     UIView *topFillerView = [[UIView alloc] initWithFrame:CGRectZero];
