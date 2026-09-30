@@ -38,7 +38,15 @@ static id WCZZValue(id obj, NSString *key) {
 @interface WCZZSettingsViewController : UITableViewController @end
 @implementation WCZZSettingsViewController
 - (instancetype)init { return [super initWithStyle:UITableViewStyleGrouped]; }
-- (void)viewDidLoad { [super viewDidLoad]; self.title = @"WCZZ"; self.tableView.tableFooterView = [UIView new]; }
+- (void)viewDidLoad { [super viewDidLoad]; self.title = @"WCZZ"; self.tableView.tableFooterView = [UIView new];
+    if (@available(iOS 13.0, *)) {
+        self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
+        self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    } else {
+        self.tableView.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
+        self.view.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
+    }
+}
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 2; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section { return 1; }
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
@@ -48,6 +56,13 @@ static id WCZZValue(id obj, NSString *key) {
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"wczz.setting"]; if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"wczz.setting"];
     c.accessoryView = nil; c.accessoryType = UITableViewCellAccessoryNone; c.detailTextLabel.text = nil;
+    if (@available(iOS 13.0, *)) {
+        c.backgroundColor = [UIColor systemBackgroundColor];
+        c.contentView.backgroundColor = [UIColor systemBackgroundColor];
+    } else {
+        c.backgroundColor = [UIColor whiteColor];
+        c.contentView.backgroundColor = [UIColor whiteColor];
+    }
     if (ip.section == 0) {
         c.textLabel.text=@"红包详情"; UISwitch *sw=[UISwitch new]; sw.tag=100; sw.on=WCZZBool(WCZZRedDetailKey,YES); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged]; c.accessoryView=sw;
     } else {
