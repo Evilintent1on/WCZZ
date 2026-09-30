@@ -235,11 +235,26 @@ static UIBarButtonItem *MMBlackBackButton(UIViewController *vc, SEL action) {
     if (!removed.count) {
         cell.textLabel.text = @"暂无已移除菜单";
         cell.textLabel.textColor = [UIColor secondaryLabelColor];
+        cell.imageView.image = nil;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
         return cell;
     }
-    cell.textLabel.text = removed[indexPath.row][MMMenuEntryTitleKey];
+    NSDictionary *entry = removed[indexPath.row];
+    cell.textLabel.text = entry[MMMenuEntryTitleKey];
     cell.textLabel.textColor = [UIColor labelColor];
+    NSString *ident = entry[MMMenuEntryIdentifierKey];
+    if ([ident hasPrefix:@"captured."]) {
+        UIImage *icon = [UIImage imageWithContentsOfFile:MMMenuIconPathForTitle(entry[MMMenuEntryTitleKey])];
+        if (icon) {
+            cell.imageView.image = icon;
+            cell.imageView.tintColor = nil;
+        } else if (@available(iOS 13.0, *)) {
+            cell.imageView.image = [UIImage systemImageNamed:@"arrow.down.circle.fill"];
+            cell.imageView.tintColor = [UIColor systemBlueColor];
+        }
+    } else {
+        cell.imageView.image = nil;
+    }
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     return cell;
 }
