@@ -139,6 +139,29 @@ static NSMutableDictionary *MMWCZZEntryWithTitle(NSString *title, BOOL removed) 
 
 #pragma mark - Removed items controller
 
+static UIBarButtonItem *MMBlackBackButton(id target, SEL action) {
+    CGSize size = CGSizeMake(12, 20);
+    UIGraphicsBeginImageContextWithOptions(size, NO, 0.0);
+    UIBezierPath *p = [UIBezierPath bezierPath];
+    CGFloat lw = 3.0;
+    [p moveToPoint:CGPointMake(size.width - 1, 1)];
+    [p addLineToPoint:CGPointMake(1, size.height / 2)];
+    [p addLineToPoint:CGPointMake(size.width - 1, size.height - 1)];
+    p.lineWidth = lw;
+    p.lineCapStyle = kCGLineCapRound;
+    p.lineJoinStyle = kCGLineJoinRound;
+    [[UIColor blackColor] setStroke];
+    [p stroke];
+    UIImage *chevron = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+    [btn setImage:chevron forState:UIControlStateNormal];
+    [btn addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
+    btn.frame = CGRectMake(0, 0, 30, 32);
+    btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    return [[UIBarButtonItem alloc] initWithCustomView:btn];
+}
+
 @interface MMWCZZRemovedItemsController : UITableViewController
 - (instancetype)initWithEntries:(NSMutableArray<NSMutableDictionary *> *)entries
                   changeHandler:(void (^)(void))changeHandler;
@@ -275,29 +298,6 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
 @property (nonatomic, assign) BOOL enabled;
 @property (nonatomic, assign) BOOL sortingEnabled;
 @end
-
-static UIBarButtonItem *MMBlackBackButton(id target, SEL action) {
-    CGSize size = CGSizeMake(12, 20);
-    UIGraphicsBeginImageContextWithOptions(size, NO, 0.0);
-    UIBezierPath *p = [UIBezierPath bezierPath];
-    CGFloat lw = 3.0;
-    [p moveToPoint:CGPointMake(size.width - 1, 1)];
-    [p addLineToPoint:CGPointMake(1, size.height / 2)];
-    [p addLineToPoint:CGPointMake(size.width - 1, size.height - 1)];
-    p.lineWidth = lw;
-    p.lineCapStyle = kCGLineCapRound;
-    p.lineJoinStyle = kCGLineJoinRound;
-    [[UIColor blackColor] setStroke];
-    [p stroke];
-    UIImage *chevron = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-    [btn setImage:chevron forState:UIControlStateNormal];
-    [btn addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
-    btn.frame = CGRectMake(0, 0, 30, 32);
-    btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    return [[UIBarButtonItem alloc] initWithCustomView:btn];
-}
 
 @implementation MessageMenuSettingsController
 
