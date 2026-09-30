@@ -97,6 +97,7 @@ static NSMutableDictionary *MMWCZZEntryWithTitle(NSString *title, BOOL removed) 
     [super viewDidLoad];
     self.title = @"已移除菜单";
     self.tableView.tableFooterView = [UIView new];
+    self.tableView.rowHeight = 60;
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
         self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
@@ -211,6 +212,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     [super viewDidLoad];
     self.title = @"长按菜单";
     self.tableView.tableFooterView = [UIView new];
+    self.tableView.rowHeight = 60;
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
         self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];

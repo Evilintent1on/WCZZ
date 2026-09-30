@@ -41,7 +41,7 @@ static id WCZZValue(id obj, NSString *key) {
     if (@available(iOS 13.0, *)) return [super initWithStyle:UITableViewStyleInsetGrouped];
     return [super initWithStyle:UITableViewStyleGrouped];
 }
-- (void)viewDidLoad { [super viewDidLoad]; self.title = @"WCZZ"; self.tableView.tableFooterView = [UIView new];
+- (void)viewDidLoad { [super viewDidLoad]; self.title = @"WCZZ"; self.tableView.tableFooterView = [UIView new]; self.tableView.rowHeight = 60;
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
         self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
