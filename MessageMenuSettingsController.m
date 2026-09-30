@@ -509,7 +509,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
         cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu 项", (unsigned long)[self removedEntries].count];
         cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-        cell.layoutMargins = UIEdgeInsetsMake(0, 32, 0, 28);
+        cell.layoutMargins = UIEdgeInsetsMake(0, 32, 0, 32);
         if (!self.enabled) {
             cell.textLabel.textColor = [UIColor secondaryLabelColor];
             cell.userInteractionEnabled = NO;
