@@ -28,6 +28,11 @@ static void WCZZSetBool(NSString *key, BOOL value) {
 }
 static void WCZZLog(NSString *format, ...) { }
 
+static id WCZZValue(id obj, NSString *key) {
+    if (!obj) return nil;
+    @try { return [obj valueForKey:key]; } @catch (__unused NSException *e) { return nil; }
+}
+
 
 
 #pragma mark - Settings
