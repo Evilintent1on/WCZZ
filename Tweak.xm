@@ -4,8 +4,6 @@
 #import "MessageMenuBackup.h"
 #import "MessageMenuSettingsController.h"
 #import "WCHookSettingsManager.h"
-#import "WCHookMessageNavigator.h"
-#import "WCHookSettingsViewController.h"
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <Foundation/Foundation.h>
@@ -41,22 +39,19 @@ static id WCZZValue(id obj, NSString *key) {
 @implementation WCZZSettingsViewController
 - (instancetype)init { return [super initWithStyle:UITableViewStyleGrouped]; }
 - (void)viewDidLoad { [super viewDidLoad]; self.title = @"WCZZ"; self.tableView.tableFooterView = [UIView new]; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 2; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section { return 1; }
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
     if (section == 0) return @"红包";
-    if (section == 1) return @"消息";
-    return @"手势";
+    return @"消息";
 }
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"wczz.setting"]; if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"wczz.setting"];
     c.accessoryView = nil; c.accessoryType = UITableViewCellAccessoryNone; c.detailTextLabel.text = nil;
     if (ip.section == 0) {
         c.textLabel.text=@"红包详情"; UISwitch *sw=[UISwitch new]; sw.tag=100; sw.on=WCZZBool(WCZZRedDetailKey,YES); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged]; c.accessoryView=sw;
-    } else if (ip.section == 1) {
-        c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     } else {
-        c.textLabel.text=@"左滑引用"; c.detailTextLabel.text=[WCHookSettings() summaryTextForSwipeQuote]; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+        c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     }
     return c;
 }
@@ -64,7 +59,6 @@ static id WCZZValue(id obj, NSString *key) {
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
     if (ip.section == 1) [self.navigationController pushViewController:[MessageMenuSettingsController new] animated:YES];
-    else if (ip.section == 2) [self.navigationController pushViewController:[WCHookSettingsViewController new] animated:YES];
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
 @end
