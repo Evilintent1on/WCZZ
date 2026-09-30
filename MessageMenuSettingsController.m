@@ -93,6 +93,13 @@ static NSMutableDictionary *MMWCZZEntryWithTitle(NSString *title, BOOL removed) 
     [super viewDidLoad];
     self.title = @"已移除菜单";
     self.tableView.tableFooterView = [UIView new];
+    if (@available(iOS 13.0, *)) {
+        self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
+        self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    } else {
+        self.tableView.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
+        self.view.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
+    }
 }
 
 - (NSArray<NSDictionary *> *)removedEntries {
@@ -114,6 +121,13 @@ static NSMutableDictionary *MMWCZZEntryWithTitle(NSString *title, BOOL removed) 
     NSArray<NSDictionary *> *removed = [self removedEntries];
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"mm.removed"];
     if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"mm.removed"];
+    if (@available(iOS 13.0, *)) {
+        cell.backgroundColor = [UIColor systemBackgroundColor];
+        cell.contentView.backgroundColor = [UIColor systemBackgroundColor];
+    } else {
+        cell.backgroundColor = [UIColor whiteColor];
+        cell.contentView.backgroundColor = [UIColor whiteColor];
+    }
     if (!removed.count) {
         cell.textLabel.text = @"暂无已移除菜单";
         cell.textLabel.textColor = [UIColor secondaryLabelColor];
@@ -196,6 +210,13 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     [super viewDidLoad];
     self.title = @"长按菜单";
     self.tableView.tableFooterView = [UIView new];
+    if (@available(iOS 13.0, *)) {
+        self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
+        self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    } else {
+        self.tableView.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
+        self.view.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
+    }
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd
                                                      target:self
@@ -279,6 +300,13 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"mm.cell"];
     if (!cell) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"mm.cell"];
+    }
+    if (@available(iOS 13.0, *)) {
+        cell.backgroundColor = [UIColor systemBackgroundColor];
+        cell.contentView.backgroundColor = [UIColor systemBackgroundColor];
+    } else {
+        cell.backgroundColor = [UIColor whiteColor];
+        cell.contentView.backgroundColor = [UIColor whiteColor];
     }
     cell.accessoryView = nil;
     cell.accessoryType = UITableViewCellAccessoryNone;
