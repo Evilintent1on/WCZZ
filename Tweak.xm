@@ -58,9 +58,13 @@ static id WCZZValue(id obj, NSString *key) {
 }
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"wczz.setting"]; if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"wczz.setting"];
-    c.accessoryView = nil; c.accessoryType = UITableViewCellAccessoryNone; c.detailTextLabel.text = nil;
+    c.accessoryView = nil; c.accessoryType = UITableViewCellAccessoryNone; c.detailTextLabel.text = nil; c.selectionStyle=UITableViewCellSelectionStyleDefault;
+    for (UIView *v in [c.contentView.subviews copy]) { if ([v isKindOfClass:[UISwitch class]]) [v removeFromSuperview]; }
     if (ip.section == 0) {
-        c.textLabel.text=@"红包详情"; UISwitch *sw=[UISwitch new]; sw.tag=100; sw.on=WCZZBool(WCZZRedDetailKey,YES); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged]; c.accessoryView=sw;
+        c.textLabel.text=@"红包详情"; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        UISwitch *sw=[UISwitch new]; sw.tag=100; sw.on=WCZZBool(WCZZRedDetailKey,YES); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
+        sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
+        [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-16],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else {
         c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     }

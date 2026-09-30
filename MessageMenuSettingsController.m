@@ -308,23 +308,31 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     cell.textLabel.textColor = [UIColor labelColor];
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     cell.userInteractionEnabled = YES;
+    cell.showsReorderControl = NO;
+    for (UIView *v in [cell.contentView.subviews copy]) { if ([v isKindOfClass:[UISwitch class]]) [v removeFromSuperview]; }
 
     if (indexPath.section == MMSectionGeneral) {
         if (indexPath.row == 0) {
             cell.textLabel.text = @"启用长按菜单自定义";
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
             UISwitch *sw = [UISwitch new];
             sw.tag = 1;
             sw.on = self.enabled;
             [sw addTarget:self action:@selector(switchChanged:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = sw;
+            sw.translatesAutoresizingMaskIntoConstraints = NO;
+            [cell.contentView addSubview:sw];
+            [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-16],[sw.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]]];
         } else {
             cell.textLabel.text = @"自定义排序";
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
             UISwitch *sw = [UISwitch new];
             sw.tag = 2;
             sw.on = self.sortingEnabled;
             sw.enabled = self.enabled;
             [sw addTarget:self action:@selector(switchChanged:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = sw;
+            sw.translatesAutoresizingMaskIntoConstraints = NO;
+            [cell.contentView addSubview:sw];
+            [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-16],[sw.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]]];
             if (!self.enabled) cell.textLabel.textColor = [UIColor secondaryLabelColor];
         }
         return cell;
@@ -337,12 +345,15 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
         if (self.enabled && self.sortingEnabled) {
             cell.showsReorderControl = YES;
         } else {
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
             UISwitch *sw = [UISwitch new];
             sw.on = YES;
             sw.enabled = self.enabled;
             sw.accessibilityIdentifier = entry[MMMenuEntryIdentifierKey];
             [sw addTarget:self action:@selector(entrySwitchChanged:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = sw;
+            sw.translatesAutoresizingMaskIntoConstraints = NO;
+            [cell.contentView addSubview:sw];
+            [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-16],[sw.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]]];
         }
         if (!self.enabled) {
             cell.textLabel.textColor = [UIColor secondaryLabelColor];
