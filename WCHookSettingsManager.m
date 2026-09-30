@@ -45,13 +45,32 @@ static NSArray<NSDictionary *> *WCHookSettingsConfiguration(void) {
                 WCHookSettingConfigKeyFooter : @"",
                 WCHookSettingConfigKeyItems : @[
                     @{
-                        WCHookSettingConfigKeyIdentifier : @"WCHookSwipeQuote",
-                        WCHookSettingConfigKeyType : WCHookSettingItemTypeToggle,
-                        WCHookSettingConfigKeyTitle : @"消息左滑引用",
-                        WCHookSettingConfigKeySubtitle : @"向左滑动即可快速引用回复",
-                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.swipeQuoteEnabled",
-                        WCHookSettingConfigKeyDefaultValue : @NO,
-                        WCHookSettingConfigKeyNotification : @"com.wchook.notification.swipeQuoteStateDidChange",
+                        WCHookSettingConfigKeyIdentifier : @"WCHookSwipeLeftOther",
+                        WCHookSettingConfigKeyType : WCHookSettingItemTypeNavigation,
+                        WCHookSettingConfigKeyTitle : @"对方消息 · 左滑",
+                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.swipeLeftOther",
+                        WCHookSettingConfigKeyDefaultValue : @1,
+                    },
+                    @{
+                        WCHookSettingConfigKeyIdentifier : @"WCHookSwipeRightOther",
+                        WCHookSettingConfigKeyType : WCHookSettingItemTypeNavigation,
+                        WCHookSettingConfigKeyTitle : @"对方消息 · 右滑",
+                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.swipeRightOther",
+                        WCHookSettingConfigKeyDefaultValue : @0,
+                    },
+                    @{
+                        WCHookSettingConfigKeyIdentifier : @"WCHookSwipeLeftSelf",
+                        WCHookSettingConfigKeyType : WCHookSettingItemTypeNavigation,
+                        WCHookSettingConfigKeyTitle : @"我方消息 · 左滑",
+                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.swipeLeftSelf",
+                        WCHookSettingConfigKeyDefaultValue : @2,
+                    },
+                    @{
+                        WCHookSettingConfigKeyIdentifier : @"WCHookSwipeRightSelf",
+                        WCHookSettingConfigKeyType : WCHookSettingItemTypeNavigation,
+                        WCHookSettingConfigKeyTitle : @"我方消息 · 右滑",
+                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.swipeRightSelf",
+                        WCHookSettingConfigKeyDefaultValue : @1,
                     },
                     @{
                         WCHookSettingConfigKeyIdentifier : @"WCHookTapReferJump",
@@ -244,11 +263,11 @@ static NSArray<NSDictionary *> *WCHookSettingsConfiguration(void) {
 }
 
 - (NSString *)summaryTextForSwipeQuote {
-    BOOL swipeEnabled = [self isEnabledForKey:@"WCHookSwipeQuote"];
-    BOOL tapEnabled = [self isEnabledForKey:@"WCHookTapReferJump"];
-    NSString *swipeText = swipeEnabled ? @"开启" : @"关闭";
-    NSString *tapText = tapEnabled ? @"开启" : @"关闭";
-    return [NSString stringWithFormat:@"左滑引用:%@ | 引用跳转:%@", swipeText, tapText];
+    NSString *leftOther = [self wchook_swipeActionNameForIdentifier:@"WCHookSwipeLeftOther"];
+    NSString *rightOther = [self wchook_swipeActionNameForIdentifier:@"WCHookSwipeRightOther"];
+    NSString *leftSelf = [self wchook_swipeActionNameForIdentifier:@"WCHookSwipeLeftSelf"];
+    NSString *rightSelf = [self wchook_swipeActionNameForIdentifier:@"WCHookSwipeRightSelf"];
+    return [NSString stringWithFormat:@"对方:左%@/右%@ | 我方:左%@/右%@", leftOther, rightOther, leftSelf, rightSelf];
 }
 
 - (NSDictionary *)wchook_itemConfigurationForIdentifier:(NSString *)identifier {
@@ -315,6 +334,18 @@ static NSArray<NSDictionary *> *WCHookSettingsConfiguration(void) {
                 [weakSelf wchook_cycleHapticLevel];
             }];
         }
+        // 滑动动作：对方消息（关闭/引用/删除），我方消息（关闭/引用/撤回）
+        NSArray *swipeIds = @[@"WCHookSwipeLeftOther", @"WCHookSwipeRightOther",
+                              @"WCHookSwipeLeftSelf", @"WCHookSwipeRightSelf"];
+        if ([swipeIds containsObject:identifier]) {
+            detail = [weakSelf wchook_swipeActionNameForIdentifier:identifier];
+            return [WCHookSettingItem navigationItemWithIdentifier:identifier
+                                                             title:title
+                                                            detail:detail
+                                                     actionHandler:^{
+                [weakSelf wchook_cycleSwipeActionForIdentifier:identifier];
+            }];
+        }
         return [WCHookSettingItem navigationItemWithIdentifier:identifier
                                                          title:title
                                                         detail:detail
@@ -322,6 +353,50 @@ static NSArray<NSDictionary *> *WCHookSettingsConfiguration(void) {
     }
 
     return nil;
+}
+
+#pragma mark - 滑动动作
+
+- (NSInteger)wchook_swipeActionForIdentifier:(NSString *)identifier {
+    NSDictionary *config = [self wchook_itemConfigurationForIdentifier:identifier];
+    NSString *defaultsKey = config[WCHookSettingConfigKeyDefaultsKey];
+    NSNumber *defaultValue = config[WCHookSettingConfigKeyDefaultValue];
+    if (defaultsKey.length == 0) {
+        return [defaultValue integerValue];
+    }
+    if (![[NSUserDefaults standardUserDefaults] objectForKey:defaultsKey]) {
+        NSInteger dv = [defaultValue integerValue];
+        [[NSUserDefaults standardUserDefaults] setInteger:dv forKey:defaultsKey];
+        return dv;
+    }
+    NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:defaultsKey];
+    if (value < 0 || value > 2) {
+        value = [defaultValue integerValue];
+    }
+    return value;
+}
+
+- (NSString *)wchook_swipeActionNameForIdentifier:(NSString *)identifier {
+    NSInteger value = [self wchook_swipeActionForIdentifier:identifier];
+    BOOL isSelf = [identifier containsString:@"Self"];
+    switch (value) {
+        case 0: return @"关闭";
+        case 1: return @"引用";
+        case 2: return isSelf ? @"撤回" : @"删除";
+        default: return @"关闭";
+    }
+}
+
+- (void)wchook_cycleSwipeActionForIdentifier:(NSString *)identifier {
+    NSInteger value = [self wchook_swipeActionForIdentifier:identifier];
+    value = (value + 1) % 3;
+    NSDictionary *config = [self wchook_itemConfigurationForIdentifier:identifier];
+    NSString *defaultsKey = config[WCHookSettingConfigKeyDefaultsKey];
+    if (defaultsKey.length > 0) {
+        [[NSUserDefaults standardUserDefaults] setInteger:value forKey:defaultsKey];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }
+    [[NSNotificationCenter defaultCenter] postNotificationName:@"com.wchook.notification.swipeQuoteStateDidChange" object:nil];
 }
 
 #pragma mark - 手势震动档位

@@ -29,6 +29,61 @@ static void WCZZSetBool(NSString *key, BOOL value) {
 }
 static void WCZZLog(NSString *format, ...) { }
 
+// 滑动动作：0=关闭，1=引用，2=删除/撤回
+// 返回是否有任意滑动方向配置了动作
+static BOOL WCHookAnySwipeEnabled(void) {
+    NSArray *keys = @[@"com.wchook.swipeLeftOther", @"com.wchook.swipeRightOther",
+                      @"com.wchook.swipeLeftSelf", @"com.wchook.swipeRightSelf"];
+    NSArray *defaults = @[@1, @0, @2, @1];
+    for (NSUInteger i = 0; i < keys.count; i++) {
+        NSString *key = keys[i];
+        NSInteger value;
+        if (![[NSUserDefaults standardUserDefaults] objectForKey:key]) {
+            value = [defaults[i] integerValue];
+        } else {
+            value = [[NSUserDefaults standardUserDefaults] integerForKey:key];
+        }
+        if (value != 0) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+// 获取指定方向的滑动动作（direction: 1=左滑，2=右滑；isSelf: 是否我方消息）
+static NSInteger WCHookSwipeActionForDirection(NSInteger direction, BOOL isSelf) {
+    NSString *key = nil;
+    NSInteger defaultValue = 0;
+    if (direction == 1) { // 左滑
+        if (isSelf) {
+            key = @"com.wchook.swipeLeftSelf";
+            defaultValue = 2; // 撤回
+        } else {
+            key = @"com.wchook.swipeLeftOther";
+            defaultValue = 1; // 引用
+        }
+    } else if (direction == 2) { // 右滑
+        if (isSelf) {
+            key = @"com.wchook.swipeRightSelf";
+            defaultValue = 1; // 引用
+        } else {
+            key = @"com.wchook.swipeRightOther";
+            defaultValue = 0; // 关闭
+        }
+    }
+    if (!key) {
+        return 0;
+    }
+    if (![[NSUserDefaults standardUserDefaults] objectForKey:key]) {
+        return defaultValue;
+    }
+    NSInteger value = [[NSUserDefaults standardUserDefaults] integerForKey:key];
+    if (value < 0 || value > 2) {
+        return defaultValue;
+    }
+    return value;
+}
+
 static id WCZZValue(id obj, NSString *key) {
     if (!obj) return nil;
     @try { return [obj valueForKey:key]; } @catch (__unused NSException *e) { return nil; }
@@ -556,6 +611,9 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
 - (void)wchook_handleSwipe:(UIPanGestureRecognizer *)gesture;
 - (void)wchook_resetSwipeAnimated:(BOOL)animated;
 - (void)wchook_triggerQuoteReply;
+- (BOOL)wchook_isMessageFromSelf;
+- (void)wchook_triggerDeleteMessage;
+- (void)wchook_triggerRecallMessage;
 - (void)wchook_insertAtMention:(NSString *)username nickname:(NSString *)nickname;
 - (id)wchook_findInputToolViewInView:(UIView *)view;
 - (UITextView *)wchook_findTextViewInView:(UIView *)view;
@@ -581,7 +639,7 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
 
 %new
 - (void)wchook_setupSwipeGestureIfNeeded {
-    if (![WCHookSettings() isEnabledForKey:@"WCHookSwipeQuote"]) {
+    if (!WCHookAnySwipeEnabled()) {
         if (self.wchook_swipeGesture) {
             self.wchook_swipeGesture.enabled = NO;
         }
@@ -624,7 +682,7 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
         return;
     }
 
-    if (![WCHookSettings() isEnabledForKey:@"WCHookSwipeQuote"]) {
+    if (!WCHookAnySwipeEnabled()) {
         [self wchook_resetSwipeAnimated:NO];
         return;
     }
@@ -654,7 +712,7 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
         CGAffineTransform transform = CGAffineTransformMakeTranslation(clamped, 0.0f);
         [WCHookSwipeUtilities applyTransform:transform toViews:messageViews];
 
-        if (!self.wchook_feedbackTriggered && translation.x <= -threshold) {
+        if (!self.wchook_feedbackTriggered && fabs(translation.x) >= threshold) {
             [self.wchook_feedbackGenerator impactOccurred];
             self.wchook_feedbackTriggered = YES;
         }
@@ -662,12 +720,24 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
     }
     case UIGestureRecognizerStateCancelled:
     case UIGestureRecognizerStateEnded: {
-        if ([WCHookSwipeUtilities shouldTriggerWithTranslation:translation velocity:velocity threshold:threshold]) {
+        NSInteger direction = [WCHookSwipeUtilities triggerDirectionWithTranslation:translation velocity:velocity threshold:threshold];
+        if (direction != 0) {
             if (!self.wchook_feedbackTriggered) {
                 [self.wchook_feedbackGenerator impactOccurred];
                 self.wchook_feedbackTriggered = YES;
             }
-            [self wchook_triggerQuoteReply];
+            BOOL isSelf = [self wchook_isMessageFromSelf];
+            NSInteger action = WCHookSwipeActionForDirection(direction, isSelf);
+            if (action == 1) {
+                [self wchook_triggerQuoteReply];
+            } else if (action == 2) {
+                if (isSelf) {
+                    [self wchook_triggerRecallMessage];
+                } else {
+                    [self wchook_triggerDeleteMessage];
+                }
+            }
+            // action == 0: 关闭，不执行任何操作
         }
         [self wchook_resetSwipeAnimated:NO];
         break;
@@ -728,6 +798,92 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
         });
       }
     });
+}
+
+%new
+- (BOOL)wchook_isMessageFromSelf {
+    @try {
+        id messageWrap = nil;
+        if ([self respondsToSelector:@selector(messageWrap)]) {
+            messageWrap = [self performSelector:@selector(messageWrap)];
+        } else if ([self respondsToSelector:@selector(getMessageWrap)]) {
+            messageWrap = [self performSelector:@selector(getMessageWrap)];
+        }
+        if (!messageWrap) {
+            return NO;
+        }
+        // 尝试通过 isSenderFromSelf 判断
+        if ([messageWrap respondsToSelector:@selector(isSenderFromSelf)]) {
+            return [[messageWrap performSelector:@selector(isSenderFromSelf)] boolValue];
+        }
+        // 尝试通过 fromUsrName 与当前登录用户对比
+        NSString *fromUsrName = nil;
+        if ([messageWrap respondsToSelector:@selector(fromUsrName)]) {
+            fromUsrName = [messageWrap performSelector:@selector(fromUsrName)];
+        }
+        if (fromUsrName.length > 0) {
+            // 获取当前登录用户
+            id contactMgr = nil;
+            @try {
+                Class mgrClass = objc_getClass("CContactMgr");
+                if (mgrClass && [mgrClass respondsToSelector:@selector(shareInstance)]) {
+                    contactMgr = [mgrClass performSelector:@selector(shareInstance)];
+                }
+            } @catch (__unused NSException *e) {
+            }
+            if (contactMgr && [contactMgr respondsToSelector:@selector(getSelfContact)]) {
+                id selfContact = [contactMgr performSelector:@selector(getSelfContact)];
+                if (selfContact && [selfContact respondsToSelector:@selector(m_nsUsrName)]) {
+                    NSString *selfUsrName = [selfContact performSelector:@selector(m_nsUsrName)];
+                    if ([fromUsrName isEqualToString:selfUsrName]) {
+                        return YES;
+                    }
+                }
+            }
+        }
+    } @catch (__unused NSException *exception) {
+    }
+    return NO;
+}
+
+%new
+- (void)wchook_triggerDeleteMessage {
+    // 尝试调用删除消息的 selector（best-effort）
+    NSArray *selectors = @[@"onDelMsg:", @"onDeleteMsg:", @"deleteMessage", @"onDeleteMessage:"];
+    for (NSString *selName in selectors) {
+        SEL sel = NSSelectorFromString(selName);
+        if ([self respondsToSelector:sel]) {
+            @try {
+                if ([selName hasSuffix:@":"]) {
+                    [self performSelector:sel withObject:nil];
+                } else {
+                    [self performSelector:sel];
+                }
+                return;
+            } @catch (__unused NSException *exception) {
+            }
+        }
+    }
+}
+
+%new
+- (void)wchook_triggerRecallMessage {
+    // 尝试调用撤回消息的 selector（best-effort）
+    NSArray *selectors = @[@"onRevokeMsg:", @"onRecallMsg:", @"revokeMessage", @"onRevokeMessage:"];
+    for (NSString *selName in selectors) {
+        SEL sel = NSSelectorFromString(selName);
+        if ([self respondsToSelector:sel]) {
+            @try {
+                if ([selName hasSuffix:@":"]) {
+                    [self performSelector:sel withObject:nil];
+                } else {
+                    [self performSelector:sel];
+                }
+                return;
+            } @catch (__unused NSException *exception) {
+            }
+        }
+    }
 }
 
 %new
@@ -836,7 +992,7 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
 
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
     if (gestureRecognizer == self.wchook_swipeGesture) {
-        if (![WCHookSettings() isEnabledForKey:@"WCHookSwipeQuote"]) {
+        if (!WCHookAnySwipeEnabled()) {
             return NO;
         }
         UIPanGestureRecognizer *pan = (UIPanGestureRecognizer *)gestureRecognizer;

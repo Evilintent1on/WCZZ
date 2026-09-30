@@ -45,22 +45,32 @@ static void WCHookCollectMessageCellViewsFromView(UIView *root, NSMutableArray<U
 }
 
 + (CGFloat)clampedTranslation:(CGFloat)translation threshold:(CGFloat)threshold {
-    if (translation >= 0.0f) {
-        return 0.0f;
-    }
     if (translation <= -threshold) {
         return -threshold;
     }
+    if (translation >= threshold) {
+        return threshold;
+    }
     return translation;
+}
+
+// 返回值：0=不触发，1=左滑触发，2=右滑触发
++ (NSInteger)triggerDirectionWithTranslation:(CGPoint)translation
+                                    velocity:(CGPoint)velocity
+                                   threshold:(CGFloat)threshold {
+    if (translation.x <= -threshold || velocity.x < -600.0f) {
+        return 1;
+    }
+    if (translation.x >= threshold || velocity.x > 600.0f) {
+        return 2;
+    }
+    return 0;
 }
 
 + (BOOL)shouldTriggerWithTranslation:(CGPoint)translation
                             velocity:(CGPoint)velocity
                            threshold:(CGFloat)threshold {
-    if (translation.x <= -threshold) {
-        return YES;
-    }
-    return (velocity.x < -600.0f);
+    return [self triggerDirectionWithTranslation:translation velocity:velocity threshold:threshold] != 0;
 }
 
 + (NSArray<UIView *> *)relatedMessageViewsForCommonView:(CommonMessageCellView *)view {
