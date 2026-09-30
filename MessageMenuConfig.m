@@ -485,15 +485,74 @@ NSArray *MMMenuApplyPolicy(NSArray *items) {
 // Live menu capture: harvest real titles from WeChat's menu items so anything
 // WeChat shows (including items missing from the builtin list) becomes
 // manageable in settings. Matching stays title-based, same as the policy.
+// Icons are also harvested when the item carries one, saved as PNG files so
+// the settings list can show the same icon WeChat shows.
 // ---------------------------------------------------------------------------
+static NSString *MMMenuCapturedIconsDir(void) {
+    static NSString *dir;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSArray<NSString *> *paths = NSSearchPathForDirectoriesInDomains(
+            NSCachesDirectory, NSUserDomainMask, YES);
+        dir = [[paths.firstObject
+            stringByAppendingPathComponent:@"WCZZMenuIcons"] copy];
+        [[NSFileManager defaultManager] createDirectoryAtPath:dir
+                                  withIntermediateDirectories:YES
+                                                   attributes:nil
+                                                        error:nil];
+    });
+    return dir;
+}
+
+static NSUInteger MMMenuStableHash(NSString *s) {
+    // DJB2, deterministic across launches (NSString -hash is not guaranteed).
+    NSUInteger h = 5381;
+    for (NSUInteger i = 0; i < s.length; i++) {
+        h = ((h << 5) + h) + [s characterAtIndex:i];
+    }
+    return h;
+}
+
+NSString *MMMenuIconPathForTitle(NSString *title) {
+    NSString *name = [NSString stringWithFormat:@"%lx.png",
+                      (unsigned long)MMMenuStableHash(title ?: @"")];
+    return [MMMenuCapturedIconsDir() stringByAppendingPathComponent:name];
+}
+
+static UIImage *MMMenuItemIcon(id item) {
+    if (!item) return nil;
+    static SEL iconSelectors[5];
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        iconSelectors[0] = sel_registerName("image");
+        iconSelectors[1] = sel_registerName("icon");
+        iconSelectors[2] = sel_registerName("menuImage");
+        iconSelectors[3] = sel_registerName("menuIcon");
+        iconSelectors[4] = sel_registerName("itemImage");
+    });
+    for (NSUInteger i = 0; i < 5; i++) {
+        SEL sel = iconSelectors[i];
+        if (![item respondsToSelector:sel]) continue;
+        @try {
+            id value = ((id (*)(id, SEL))objc_msgSend)(item, sel);
+            if ([value isKindOfClass:[UIImage class]]) return value;
+        } @catch (__unused NSException *e) {}
+    }
+    return nil;
+}
+
 void MMMenuCaptureTitles(NSArray *items) {
     if (![items isKindOfClass:[NSArray class]] || items.count == 0) return;
 
     NSMutableOrderedSet<NSString *> *titles = [NSMutableOrderedSet orderedSet];
+    NSMutableDictionary<NSString *, UIImage *> *iconsByTitle = [NSMutableDictionary dictionary];
     for (id item in items) {
         @try {
             NSString *t = MMMenuItemTitle(item);
-            if (t.length) [titles addObject:t];
+            if (!t.length) continue;
+            [titles addObject:t];
+            UIImage *icon = MMMenuItemIcon(item);
+            if (icon && !iconsByTitle[t]) iconsByTitle[t] = icon;
         } @catch (__unused NSException *e) {}
     }
     if (titles.count == 0) return;
@@ -506,6 +565,7 @@ void MMMenuCaptureTitles(NSArray *items) {
     }
 
     NSMutableArray<NSDictionary *> *merged = [entries mutableCopy];
+    NSMutableOrderedSet<NSString *> *newTitles = [NSMutableOrderedSet orderedSet];
     BOOL changed = NO;
     for (NSString *t in titles) {
         if ([known containsObject:t]) continue;
@@ -513,9 +573,21 @@ void MMMenuCaptureTitles(NSArray *items) {
                            [[NSUUID UUID] UUIDString]];
         [merged addObject:MMMenuEntry(ident, t, NO, NO)];
         [known addObject:t];
+        [newTitles addObject:t];
         changed = YES;
     }
     if (changed) MMMenuSaveEntries(merged);
+
+    // Persist harvested icons for newly captured titles so the settings list
+    // can show the same icon WeChat shows.
+    for (NSString *t in newTitles) {
+        UIImage *icon = iconsByTitle[t];
+        if (!icon) continue;
+        @try {
+            NSData *data = UIImagePNGRepresentation(icon);
+            if (data) [data writeToFile:MMMenuIconPathForTitle(t) atomically:YES];
+        } @catch (__unused NSException *e) {}
+    }
 }
 
 // ---------------------------------------------------------------------------

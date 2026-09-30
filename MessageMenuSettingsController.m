@@ -455,6 +455,20 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
         NSArray<NSDictionary *> *kept = [self keptEntries];
         NSDictionary *entry = kept[indexPath.row];
         cell.textLabel.text = entry[MMMenuEntryTitleKey];
+        NSString *ident = entry[MMMenuEntryIdentifierKey];
+        if ([ident hasPrefix:@"captured."]) {
+            NSString *title = entry[MMMenuEntryTitleKey];
+            UIImage *icon = [UIImage imageWithContentsOfFile:MMMenuIconPathForTitle(title)];
+            if (icon) {
+                cell.imageView.image = icon;
+                cell.imageView.tintColor = nil;
+            } else if (@available(iOS 13.0, *)) {
+                cell.imageView.image = [UIImage systemImageNamed:@"arrow.down.circle.fill"];
+                cell.imageView.tintColor = [UIColor systemBlueColor];
+            }
+        } else {
+            cell.imageView.image = nil;
+        }
         if (self.enabled && self.sortingEnabled) {
             cell.showsReorderControl = YES;
         } else {
@@ -480,6 +494,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
         cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu 项", (unsigned long)[self removedEntries].count];
         cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+        cell.layoutMargins = UIEdgeInsetsMake(0, 32, 0, 28);
         if (!self.enabled) {
             cell.textLabel.textColor = [UIColor secondaryLabelColor];
             cell.userInteractionEnabled = NO;

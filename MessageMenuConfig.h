@@ -43,6 +43,9 @@ NSArray *MMMenuApplyPolicy(NSArray *items);
 /// Safe to call on every menu presentation; only new titles trigger a save.
 void MMMenuCaptureTitles(NSArray *items);
 
+/// File path of the harvested icon PNG for a captured menu title, if any.
+NSString *MMMenuIconPathForTitle(NSString *title);
+
 BOOL MMMenuPluginManagerAvailable(void);
 void MMMenuRegisterWithPluginManager(void);
 
