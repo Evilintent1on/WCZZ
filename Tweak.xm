@@ -37,7 +37,10 @@ static id WCZZValue(id obj, NSString *key) {
 
 @interface WCZZSettingsViewController : UITableViewController @end
 @implementation WCZZSettingsViewController
-- (instancetype)init { return [super initWithStyle:UITableViewStyleGrouped]; }
+- (instancetype)init {
+    if (@available(iOS 13.0, *)) return [super initWithStyle:UITableViewStyleInsetGrouped];
+    return [super initWithStyle:UITableViewStyleGrouped];
+}
 - (void)viewDidLoad { [super viewDidLoad]; self.title = @"WCZZ"; self.tableView.tableFooterView = [UIView new];
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
