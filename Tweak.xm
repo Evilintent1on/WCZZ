@@ -1,4 +1,8 @@
 #import "WeChatCompat.h"
+#import "WeChatHeaders.h"
+#import "MessageMenuConfig.h"
+#import "MessageMenuBackup.h"
+#import "MessageMenuSettingsController.h"
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <Foundation/Foundation.h>
@@ -8,7 +12,7 @@
 #import <limits.h>
 
 // WCZZ 0.1-1
-// Red packet detail overlay for WeChat 8.0.75.
+// Red packet detail overlay + message long-press menu customizer for WeChat 8.0.75.
 
 static NSString * const WCZZRedDetailKey     = @"wczz.redDetail.enabled";
 
@@ -33,14 +37,23 @@ static id WCZZValue(id obj, NSString *key) {
 @implementation WCZZSettingsViewController
 - (instancetype)init { return [super initWithStyle:UITableViewStyleGrouped]; }
 - (void)viewDidLoad { [super viewDidLoad]; self.title = @"WCZZ"; self.tableView.tableFooterView = [UIView new]; }
-- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section { return section == 0 ? 1 : 0; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 2; }
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section { return 1; }
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"wczz.setting"]; if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"wczz.setting"];
     c.accessoryView = nil; c.accessoryType = UITableViewCellAccessoryNone; c.detailTextLabel.text = nil;
-    c.textLabel.text=@"红包详情"; UISwitch *sw=[UISwitch new]; sw.tag=100; sw.on=WCZZBool(WCZZRedDetailKey,YES); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged]; c.accessoryView=sw;
+    if (ip.section == 0) {
+        c.textLabel.text=@"红包详情"; UISwitch *sw=[UISwitch new]; sw.tag=100; sw.on=WCZZBool(WCZZRedDetailKey,YES); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged]; c.accessoryView=sw;
+    } else {
+        c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+    }
     return c;
 }
 - (void)wczzMain:(UISwitch *)sw { if(sw.tag==100) WCZZSetBool(WCZZRedDetailKey,sw.on); }
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    if (ip.section == 1) [self.navigationController pushViewController:[MessageMenuSettingsController new] animated:YES];
+}
 @end
 
 #pragma mark - Red envelope summary overlay
@@ -243,10 +256,288 @@ static void WCZZScheduleRedSummary(id vc, id data) {
 %end
 %end
 
+#pragma mark - Message long-press menu customization
+
+// Remember the last message cell, used for backup/restore.
+static __weak UIView *WCZZLastMessageCell;
+
+static BOOL WCZZIsMessageCell(UIView *view) {
+    if (!view) return NO;
+    Class base = NSClassFromString(@"BaseMessageCellView");
+    Class common = NSClassFromString(@"CommonMessageCellView");
+    Class emoticon = NSClassFromString(@"EmoticonMessageCellView");
+
+    UIView *candidate = view;
+    for (NSUInteger depth = 0; candidate && depth < 20; depth++) {
+        if ((base && [candidate isKindOfClass:base]) ||
+            (common && [candidate isKindOfClass:common]) ||
+            (emoticon && [candidate isKindOfClass:emoticon])) {
+            return YES;
+        }
+        candidate = candidate.superview;
+    }
+    return NO;
+}
+
+static void WCZZRememberCell(id object) {
+    if ([object isKindOfClass:[UIView class]] && WCZZIsMessageCell((UIView *)object)) {
+        WCZZLastMessageCell = object;
+    }
+}
+
+static id WCZZSafeValue(id object, NSString *key) {
+    if (!object || !key.length) return nil;
+    @try {
+        return [object valueForKey:key];
+    } @catch (NSException *exception) {
+        return nil;
+    }
+}
+
+static BOOL WCZZObjectContainsBackup(id object, NSUInteger depth) {
+    if (!object || depth > 3) return NO;
+    if ([object isKindOfClass:[NSString class]]) {
+        NSString *value = (NSString *)object;
+        return MMMenuIsBackupFilename(value) ||
+               [value rangeOfString:@"MessageMenu_backup" options:NSCaseInsensitiveSearch].location != NSNotFound;
+    }
+    if ([object isKindOfClass:[NSURL class]]) {
+        return WCZZObjectContainsBackup(((NSURL *)object).path, depth + 1);
+    }
+    if ([object isKindOfClass:[NSDictionary class]]) {
+        for (id value in [(NSDictionary *)object allValues]) {
+            if (WCZZObjectContainsBackup(value, depth + 1)) return YES;
+        }
+    }
+    if ([object isKindOfClass:[NSArray class]]) {
+        for (id value in (NSArray *)object) {
+            if (WCZZObjectContainsBackup(value, depth + 1)) return YES;
+        }
+    }
+    return NO;
+}
+
+static UIViewController *WCZZViewControllerForView(UIView *view) {
+    UIResponder *responder = view;
+    while (responder) {
+        if ([responder isKindOfClass:[UIViewController class]]) {
+            return (UIViewController *)responder;
+        }
+        responder = responder.nextResponder;
+    }
+    return nil;
+}
+
+static NSURL *WCZZBackupURLForCell(UIView *cell) {
+    id model = WCZZSafeValue(cell, @"viewModel");
+    for (NSString *key in @[@"fileURL", @"filePath", @"m_nsFilePath", @"path"]) {
+        id value = WCZZSafeValue(model, key);
+        NSURL *url = nil;
+        if ([value isKindOfClass:[NSURL class]]) {
+            url = value;
+        } else if ([value isKindOfClass:[NSString class]]) {
+            NSString *path = value;
+            url = [path rangeOfString:@"://"].location != NSNotFound
+                ? [NSURL URLWithString:path] : [NSURL fileURLWithPath:path];
+        }
+        if (url.path.length && MMMenuIsBackupFilename(url.lastPathComponent) &&
+            [[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
+            return url;
+        }
+    }
+    return MMMenuLatestBackupURL();
+}
+
+static void WCZZShowRestoreResult(UIView *cell, BOOL success, NSError *error) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *controller = WCZZViewControllerForView(cell);
+        if (!controller) return;
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:(success ? @"还原完成" : @"无法还原")
+                                                                       message:(success ? @"配置已还原并立即生效，无需重启微信。" : (error.localizedDescription ?: @"备份文件无效。"))
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+        [controller presentViewController:alert animated:YES completion:nil];
+    });
+}
+
+static void WCZZRestoreBackupFromCell(UIView *cell) {
+    NSURL *url = WCZZBackupURLForCell(cell);
+    NSError *error = nil;
+    BOOL success = url && MMMenuRestoreFromBackupURL(url, &error);
+    if (!success && !error) {
+        error = [NSError errorWithDomain:@"WCZZ.MessageMenu.Backup"
+                                     code:1
+                                 userInfo:@{NSLocalizedDescriptionKey: @"找不到备份文件"}];
+    }
+    WCZZShowRestoreResult(cell, success, error);
+}
+
+static id WCZZCreateRestoreItem(id target) {
+    SEL action = @selector(wczzMenu_restoreBackup:);
+    Class customClass = NSClassFromString(@"MMMenuItem");
+    SEL initializer = @selector(initWithTitle:target:action:);
+    if (customClass && [customClass instancesRespondToSelector:initializer]) {
+        @try {
+            return ((id (*)(id, SEL, id, id, SEL))objc_msgSend)(
+                [customClass alloc], initializer, @"还原", target, action);
+        } @catch (NSException *exception) {}
+    }
+    return [[UIMenuItem alloc] initWithTitle:@"还原" action:action];
+}
+
+static BOOL WCZZMenuItemsContainTitle(NSArray *items, NSString *title) {
+    for (id item in items) {
+        if ([MMMenuItemTitle(item) isEqualToString:title]) return YES;
+    }
+    return NO;
+}
+
+static NSArray *WCZZAppendRestoreItemIfNeeded(NSArray *items, id source) {
+    if (![items isKindOfClass:[NSArray class]] || items.count == 0) return items;
+
+    UIView *cell = nil;
+    if ([source isKindOfClass:[UIView class]] && WCZZIsMessageCell(source)) {
+        cell = source;
+    } else if ([WCZZLastMessageCell isKindOfClass:[UIView class]]) {
+        cell = WCZZLastMessageCell;
+    }
+    if (!cell) return items;
+
+    id model = WCZZSafeValue(cell, @"viewModel");
+    BOOL isBackup = WCZZObjectContainsBackup(model, 0) ||
+                    WCZZObjectContainsBackup(cell, 0) ||
+                    WCZZObjectContainsBackup(items, 0);
+
+    if (!isBackup || WCZZMenuItemsContainTitle(items, @"还原")) {
+        return items;
+    }
+
+    NSMutableArray *result = [items mutableCopy];
+    [result addObject:WCZZCreateRestoreItem(cell)];
+    return [result copy];
+}
+
+static id WCZZApplyMenuPolicy(id result, id source, SEL selector) {
+    (void)selector;
+    WCZZRememberCell(source);
+
+    if (![result isKindOfClass:[NSArray class]]) return result;
+
+    @try {
+        NSArray *processed = MMMenuApplyPolicy((NSArray *)result);
+        return WCZZAppendRestoreItemIfNeeded(processed, source);
+    } @catch (NSException *exception) {
+        return result;
+    }
+}
+
+static BOOL WCZZMenuItemsLookLikeMessageMenu(NSArray *items) {
+    if (![items isKindOfClass:[NSArray class]] || items.count == 0) return NO;
+
+    NSArray *configured = MMMenuLoadEntries();
+    for (id item in items) {
+        NSString *title = MMMenuItemTitle(item);
+        if (!title.length) continue;
+
+        for (NSDictionary *entry in configured) {
+            if ([title isEqualToString:entry[MMMenuEntryTitleKey]]) return YES;
+        }
+
+        NSString *className = NSStringFromClass([item class]);
+        if ([className rangeOfString:@"MMMenu" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responder, SEL selector) {
+    BOOL isMessage = [responder isKindOfClass:[UIView class]] && WCZZIsMessageCell((UIView *)responder);
+
+    if (!isMessage && WCZZLastMessageCell && WCZZMenuItemsLookLikeMessageMenu(items)) {
+        isMessage = YES;
+    }
+
+    if (!isMessage && !responder && [items isKindOfClass:[NSArray class]]) {
+        isMessage = YES;
+    }
+
+    if (!isMessage) return items;
+
+    return WCZZApplyMenuPolicy(items, responder ?: WCZZLastMessageCell, selector);
+}
+
+%group WCZZMenuHooks
+%hook BaseMessageCellView
+
+- (id)filteredMenuItems:(id)items {
+    WCZZRememberCell(self);
+    id result = %orig(items);
+    return WCZZApplyMenuPolicy(result, self, _cmd);
+}
+
+- (id)operationMenuItems {
+    WCZZRememberCell(self);
+    id result = %orig;
+    return WCZZApplyMenuPolicy(result, self, _cmd);
+}
+
+%new
+- (void)wczzMenu_restoreBackup:(id)sender {
+    (void)sender;
+    WCZZRestoreBackupFromCell(self);
+}
+
+%end
+
+%hook EmoticonMessageCellView
+
+- (id)filteredMenuItems:(id)items {
+    WCZZRememberCell(self);
+    id result = %orig(items);
+    return WCZZApplyMenuPolicy(result, self, _cmd);
+}
+
+- (id)operationMenuItems {
+    WCZZRememberCell(self);
+    id result = %orig;
+    return WCZZApplyMenuPolicy(result, self, _cmd);
+}
+
+%end
+
+%hook MMMenuController
+
+- (void)setMenuItems:(NSArray *)items {
+    UIResponder *responder = nil;
+    @try {
+        responder = self.responder;
+    } @catch (NSException *exception) {}
+
+    NSArray *result = WCZZProcessControllerItems(items, responder, _cmd);
+    %orig(result);
+}
+
+%end
+
+%hook UIMenuController
+
+- (void)setMenuItems:(NSArray<UIMenuItem *> *)items {
+    NSArray *result = items;
+    if (WCZZMenuItemsLookLikeMessageMenu(items) || WCZZLastMessageCell) {
+        result = WCZZApplyMenuPolicy(items, WCZZLastMessageCell, _cmd);
+    }
+    %orig(result);
+}
+
+%end
+%end
+
 #pragma mark - Plugin registration / delayed hook installation
 
 static BOOL WCZZRegistered = NO;
 static BOOL WCZZRedHooksStarted = NO;
+static BOOL WCZZMenuHooksStarted = NO;
 static NSInteger WCZZInstallAttempts = 0;
 
 static void WCZZRegisterPlugin(void) {
@@ -272,8 +563,15 @@ static void WCZZInstallHooksWhenReady(void) {
             WCZZRedHooksStarted = YES;
             WCZZLog(@"red hooks installed");
         }
+        if (!WCZZMenuHooksStarted &&
+            objc_getClass("BaseMessageCellView") &&
+            objc_getClass("MMMenuController")) {
+            %init(WCZZMenuHooks);
+            WCZZMenuHooksStarted = YES;
+            WCZZLog(@"menu hooks installed");
+        }
         WCZZRegisterPlugin();
-        if ((!WCZZRedHooksStarted || !WCZZRegistered) && WCZZInstallAttempts++ < 60) {
+        if ((!WCZZRedHooksStarted || !WCZZMenuHooksStarted || !WCZZRegistered) && WCZZInstallAttempts++ < 60) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
                 WCZZInstallHooksWhenReady();
@@ -286,6 +584,8 @@ static void WCZZInstallHooksWhenReady(void) {
     @autoreleasepool {
         NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
         if ([d objectForKey:WCZZRedDetailKey] == nil) [d setBool:YES forKey:WCZZRedDetailKey];
+        // Preload menu config so the first long-press has entries ready.
+        (void)MMMenuLoadEntries();
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ WCZZInstallHooksWhenReady(); });
     }
 }
