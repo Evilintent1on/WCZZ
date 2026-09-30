@@ -1092,15 +1092,8 @@ static void WCZZInstallHooksWhenReady(void) {
             WCZZMenuHooksStarted = YES;
             WCZZLog(@"menu hooks installed");
         }
-        if (!WCZZSwipeHooksStarted &&
-            objc_getClass("CommonMessageCellView") &&
-            objc_getClass("MMInputToolView")) {
-            %init(WCZZSwipeHooks);
-            WCZZSwipeHooksStarted = YES;
-            WCZZLog(@"swipe hooks installed");
-        }
         WCZZRegisterPlugin();
-        if ((!WCZZRedHooksStarted || !WCZZMenuHooksStarted || !WCZZSwipeHooksStarted || !WCZZRegistered) && WCZZInstallAttempts++ < 60) {
+        if ((!WCZZRedHooksStarted || !WCZZMenuHooksStarted || !WCZZRegistered) && WCZZInstallAttempts++ < 60) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
                 WCZZInstallHooksWhenReady();
