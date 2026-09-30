@@ -44,29 +44,6 @@ static NSArray<NSDictionary *> *WCHookSettingsConfiguration(void) {
                 WCHookSettingConfigKeyHeader : @"聊天界面",
                 WCHookSettingConfigKeyFooter : @"",
                 WCHookSettingConfigKeyItems : @[
-                    @{
-                        WCHookSettingConfigKeyIdentifier : @"WCHookTapReferJump",
-                        WCHookSettingConfigKeyType : WCHookSettingItemTypeToggle,
-                        WCHookSettingConfigKeyTitle : @"引用消息点击跳转",
-                        WCHookSettingConfigKeySubtitle : @"点击引用提示快速定位原文",
-                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.tapReferJumpEnabled",
-                        WCHookSettingConfigKeyDefaultValue : @NO,
-                    },
-                    @{
-                        WCHookSettingConfigKeyIdentifier : @"WCHookQuoteAndAt",
-                        WCHookSettingConfigKeyType : WCHookSettingItemTypeToggle,
-                        WCHookSettingConfigKeyTitle : @"引用并艾特",
-                        WCHookSettingConfigKeySubtitle : @"左滑引用时自动艾特对方",
-                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.quoteAndAtEnabled",
-                        WCHookSettingConfigKeyDefaultValue : @NO,
-                    },
-                    @{
-                        WCHookSettingConfigKeyIdentifier : @"WCHookHapticLevel",
-                        WCHookSettingConfigKeyType : WCHookSettingItemTypeNavigation,
-                        WCHookSettingConfigKeyTitle : @"手势震动",
-                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.hapticLevel",
-                        WCHookSettingConfigKeyDefaultValue : @2,
-                    },
                 ],
             },
         ];
