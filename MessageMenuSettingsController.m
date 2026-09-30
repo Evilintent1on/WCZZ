@@ -242,19 +242,7 @@ static UIBarButtonItem *MMBlackBackButton(UIViewController *vc, SEL action) {
     NSDictionary *entry = removed[indexPath.row];
     cell.textLabel.text = entry[MMMenuEntryTitleKey];
     cell.textLabel.textColor = [UIColor labelColor];
-    NSString *ident = entry[MMMenuEntryIdentifierKey];
-    if ([ident hasPrefix:@"captured."]) {
-        UIImage *icon = [UIImage imageWithContentsOfFile:MMMenuIconPathForTitle(entry[MMMenuEntryTitleKey])];
-        if (icon) {
-            cell.imageView.image = icon;
-            cell.imageView.tintColor = nil;
-        } else if (@available(iOS 13.0, *)) {
-            cell.imageView.image = [UIImage systemImageNamed:@"arrow.down.circle.fill"];
-            cell.imageView.tintColor = [UIColor systemBlueColor];
-        }
-    } else {
-        cell.imageView.image = nil;
-    }
+    cell.imageView.image = nil;
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     return cell;
 }
@@ -435,7 +423,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     cell.userInteractionEnabled = YES;
     cell.showsReorderControl = NO;
-    for (UIView *v in [cell.contentView.subviews copy]) { if ([v isKindOfClass:[UISwitch class]]) [v removeFromSuperview]; }
+    for (UIView *v in [cell.contentView.subviews copy]) { if ([v isKindOfClass:[UISwitch class]] || v.tag == 999) [v removeFromSuperview]; }
     MMApplyCard(cell, tableView, indexPath);
     cell.layoutMargins = UIEdgeInsetsMake(0, 32, 0, 16);
 
@@ -470,20 +458,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
         NSArray<NSDictionary *> *kept = [self keptEntries];
         NSDictionary *entry = kept[indexPath.row];
         cell.textLabel.text = entry[MMMenuEntryTitleKey];
-        NSString *ident = entry[MMMenuEntryIdentifierKey];
-        if ([ident hasPrefix:@"captured."]) {
-            NSString *title = entry[MMMenuEntryTitleKey];
-            UIImage *icon = [UIImage imageWithContentsOfFile:MMMenuIconPathForTitle(title)];
-            if (icon) {
-                cell.imageView.image = icon;
-                cell.imageView.tintColor = nil;
-            } else if (@available(iOS 13.0, *)) {
-                cell.imageView.image = [UIImage systemImageNamed:@"arrow.down.circle.fill"];
-                cell.imageView.tintColor = [UIColor systemBlueColor];
-            }
-        } else {
-            cell.imageView.image = nil;
-        }
+        cell.imageView.image = nil;
         if (self.enabled && self.sortingEnabled) {
             cell.showsReorderControl = YES;
         } else {
@@ -506,10 +481,21 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
 
     if (indexPath.section == MMSectionRemoved) {
         cell.textLabel.text = @"已移除菜单";
-        cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu 项", (unsigned long)[self removedEntries].count];
+        cell.detailTextLabel.text = nil;
         cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-        cell.layoutMargins = UIEdgeInsetsMake(0, 32, 0, 32);
+        // "X 项" centered at the switch's middle x (switch trailing -32, width 51).
+        UILabel *countLabel = [UILabel new];
+        countLabel.tag = 999;
+        countLabel.text = [NSString stringWithFormat:@"%lu 项", (unsigned long)[self removedEntries].count];
+        countLabel.textColor = [UIColor secondaryLabelColor];
+        countLabel.font = [UIFont systemFontOfSize:15];
+        countLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        [cell.contentView addSubview:countLabel];
+        [NSLayoutConstraint activateConstraints:@[
+            [countLabel.centerXAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-57.5],
+            [countLabel.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]
+        ]];
         if (!self.enabled) {
             cell.textLabel.textColor = [UIColor secondaryLabelColor];
             cell.userInteractionEnabled = NO;
