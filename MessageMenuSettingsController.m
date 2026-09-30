@@ -147,20 +147,18 @@ static NSMutableDictionary *MMWCZZEntryWithTitle(NSString *title, BOOL removed) 
 @interface MMWCZZRemovedItemsController ()
 @property (nonatomic, strong) NSMutableArray<NSMutableDictionary *> *allEntries;
 @property (nonatomic, copy) void (^changeHandler)(void);
-@property (nonatomic, strong) UIColor *savedTintColor;
 @end
 
 @implementation MMWCZZRemovedItemsController
 
-- (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
-    _savedTintColor = self.navigationController.navigationBar.tintColor;
-    self.navigationController.navigationBar.tintColor = [UIColor blackColor];
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.navigationItem.hidesBackButton = YES;
+    self.navigationItem.leftBarButtonItem = MMBlackBackButton(self, @selector(mm_backTapped));
 }
 
-- (void)viewWillDisappear:(BOOL)animated {
-    [super viewWillDisappear:animated];
-    if (_savedTintColor) self.navigationController.navigationBar.tintColor = _savedTintColor;
+- (void)mm_backTapped {
+    [self.navigationController popViewControllerAnimated:YES];
 }
 
 - (instancetype)initWithEntries:(NSMutableArray<NSMutableDictionary *> *)entries
@@ -276,8 +274,30 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
 @property (nonatomic, strong) NSMutableArray<NSMutableDictionary *> *entries;
 @property (nonatomic, assign) BOOL enabled;
 @property (nonatomic, assign) BOOL sortingEnabled;
-@property (nonatomic, strong) UIColor *savedTintColor;
 @end
+
+static UIBarButtonItem *MMBlackBackButton(id target, SEL action) {
+    CGSize size = CGSizeMake(12, 20);
+    UIGraphicsBeginImageContextWithOptions(size, NO, 0.0);
+    UIBezierPath *p = [UIBezierPath bezierPath];
+    CGFloat lw = 3.0;
+    [p moveToPoint:CGPointMake(size.width - 1, 1)];
+    [p addLineToPoint:CGPointMake(1, size.height / 2)];
+    [p addLineToPoint:CGPointMake(size.width - 1, size.height - 1)];
+    p.lineWidth = lw;
+    p.lineCapStyle = kCGLineCapRound;
+    p.lineJoinStyle = kCGLineJoinRound;
+    [[UIColor blackColor] setStroke];
+    [p stroke];
+    UIImage *chevron = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+    [btn setImage:chevron forState:UIControlStateNormal];
+    [btn addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
+    btn.frame = CGRectMake(0, 0, 30, 32);
+    btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    return [[UIBarButtonItem alloc] initWithCustomView:btn];
+}
 
 @implementation MessageMenuSettingsController
 
@@ -294,6 +314,8 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     self.tableView.rowHeight = 55;
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     self.navigationItem.backBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"" style:UIBarButtonItemStylePlain target:nil action:nil];
+    self.navigationItem.hidesBackButton = YES;
+    self.navigationItem.leftBarButtonItem = MMBlackBackButton(self, @selector(mm_backTapped));
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
         self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
@@ -313,13 +335,10 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     [self reloadConfig];
     [self.tableView reloadData];
     [self applyEditingState];
-    _savedTintColor = self.navigationController.navigationBar.tintColor;
-    self.navigationController.navigationBar.tintColor = [UIColor blackColor];
 }
 
-- (void)viewWillDisappear:(BOOL)animated {
-    [super viewWillDisappear:animated];
-    if (_savedTintColor) self.navigationController.navigationBar.tintColor = _savedTintColor;
+- (void)mm_backTapped {
+    [self.navigationController popViewControllerAnimated:YES];
 }
 
 #pragma mark - Config
