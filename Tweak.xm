@@ -522,6 +522,7 @@ static id WCZZApplyMenuPolicy(id result, id source, SEL selector) {
     if (![result isKindOfClass:[NSArray class]]) return result;
 
     @try {
+        MMMenuCaptureTitles((NSArray *)result);
         NSArray *processed = MMMenuApplyPolicy((NSArray *)result);
         return WCZZAppendRestoreItemIfNeeded(processed, source);
     } @catch (NSException *exception) {

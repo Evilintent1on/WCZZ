@@ -482,6 +482,43 @@ NSArray *MMMenuApplyPolicy(NSArray *items) {
 }
 
 // ---------------------------------------------------------------------------
+// Live menu capture: harvest real titles from WeChat's menu items so anything
+// WeChat shows (including items missing from the builtin list) becomes
+// manageable in settings. Matching stays title-based, same as the policy.
+// ---------------------------------------------------------------------------
+void MMMenuCaptureTitles(NSArray *items) {
+    if (![items isKindOfClass:[NSArray class]] || items.count == 0) return;
+
+    NSMutableOrderedSet<NSString *> *titles = [NSMutableOrderedSet orderedSet];
+    for (id item in items) {
+        @try {
+            NSString *t = MMMenuItemTitle(item);
+            if (t.length) [titles addObject:t];
+        } @catch (__unused NSException *e) {}
+    }
+    if (titles.count == 0) return;
+
+    NSArray<NSDictionary *> *entries = MMMenuLoadEntries();
+    NSMutableSet<NSString *> *known = [NSMutableSet set];
+    for (NSDictionary *e in entries) {
+        NSString *t = MMMenuNormalizeTitle(e[MMMenuEntryTitleKey]);
+        if (t) [known addObject:t];
+    }
+
+    NSMutableArray<NSDictionary *> *merged = [entries mutableCopy];
+    BOOL changed = NO;
+    for (NSString *t in titles) {
+        if ([known containsObject:t]) continue;
+        NSString *ident = [NSString stringWithFormat:@"captured.%@",
+                           [[NSUUID UUID] UUIDString]];
+        [merged addObject:MMMenuEntry(ident, t, NO, NO)];
+        [known addObject:t];
+        changed = YES;
+    }
+    if (changed) MMMenuSaveEntries(merged);
+}
+
+// ---------------------------------------------------------------------------
 // Plugin manager registration (WCPluginsMgr). Not present in all WeChat
 // builds; checked at runtime so absence is silently ignored.
 // ---------------------------------------------------------------------------

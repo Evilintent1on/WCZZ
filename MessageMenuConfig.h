@@ -38,6 +38,11 @@ NSString * _Nullable MMMenuNormalizeTitle(id _Nullable value);
 NSString * _Nullable MMMenuItemTitle(id _Nullable item);
 NSArray *MMMenuApplyPolicy(NSArray *items);
 
+/// Captures titles from a live WeChat menu and merges any unseen titles into
+/// the stored entries so they become manageable (hide/reorder) in settings.
+/// Safe to call on every menu presentation; only new titles trigger a save.
+void MMMenuCaptureTitles(NSArray *items);
+
 BOOL MMMenuPluginManagerAvailable(void);
 void MMMenuRegisterWithPluginManager(void);
 
