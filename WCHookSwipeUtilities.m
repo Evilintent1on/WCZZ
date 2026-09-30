@@ -69,12 +69,12 @@ static void WCHookCollectMessageCellViewsFromView(UIView *root, NSMutableArray<U
     }
     
     NSMutableArray<UIView *> *collected = [NSMutableArray array];
-    UITableViewCell *tableViewCell = WCHookFindContainingTableViewCell(view);
+    UITableViewCell *tableViewCell = WCHookFindContainingTableViewCell((UIView *)view);
     if (!tableViewCell) {
         return @[(UIView *)view];
     }
 
-    id messageIdentifier = WCHookMessageIdentifierForView(view);
+    id messageIdentifier = WCHookMessageIdentifierForView((UIView *)view);
     if (!messageIdentifier) {
         WCHookCollectMessageCellViewsFromView(tableViewCell.contentView, collected);
         if (collected.count == 0 || ![collected containsObject:(UIView *)view]) {
