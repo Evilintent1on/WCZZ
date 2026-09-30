@@ -65,6 +65,7 @@ FOUNDATION_EXPORT WCHookSettingsManager *WCHookSettings(void);
 - (BOOL)isEnabledForKey:(NSString *)key;
 - (void)setEnabled:(BOOL)enabled forKey:(NSString *)key;
 - (NSString *)summaryTextForSwipeQuote;
+- (NSInteger)wchook_hapticLevel;
 
 @end
 

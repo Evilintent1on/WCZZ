@@ -61,17 +61,20 @@ static NSArray<NSDictionary *> *WCHookSettingsConfiguration(void) {
                         WCHookSettingConfigKeyDefaultsKey : @"com.wchook.tapReferJumpEnabled",
                         WCHookSettingConfigKeyDefaultValue : @NO,
                     },
-                ],
-            },
-            @{
-                WCHookSettingConfigKeyIdentifier : @"about",
-                WCHookSettingConfigKeyHeader : @"关于",
-                WCHookSettingConfigKeyItems : @[
                     @{
-                        WCHookSettingConfigKeyIdentifier : @"com.wchook.settings.about",
+                        WCHookSettingConfigKeyIdentifier : @"WCHookQuoteAndAt",
+                        WCHookSettingConfigKeyType : WCHookSettingItemTypeToggle,
+                        WCHookSettingConfigKeyTitle : @"引用并艾特",
+                        WCHookSettingConfigKeySubtitle : @"左滑引用时自动艾特对方",
+                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.quoteAndAtEnabled",
+                        WCHookSettingConfigKeyDefaultValue : @NO,
+                    },
+                    @{
+                        WCHookSettingConfigKeyIdentifier : @"WCHookHapticLevel",
                         WCHookSettingConfigKeyType : WCHookSettingItemTypeNavigation,
-                        WCHookSettingConfigKeyTitle : @"WCHook",
-                        WCHookSettingConfigKeyDetail : WCHookPluginVersion,
+                        WCHookSettingConfigKeyTitle : @"手势震动",
+                        WCHookSettingConfigKeyDefaultsKey : @"com.wchook.hapticLevel",
+                        WCHookSettingConfigKeyDefaultValue : @2,
                     },
                 ],
             },
@@ -301,6 +304,17 @@ static NSArray<NSDictionary *> *WCHookSettingsConfiguration(void) {
 
     if ([type isEqualToString:WCHookSettingItemTypeNavigation]) {
         NSString *detail = configuration[WCHookSettingConfigKeyDetail];
+        __weak typeof(self) weakSelf = self;
+        // 手势震动档位：显示当前档位，点击循环切换
+        if ([identifier isEqualToString:@"WCHookHapticLevel"]) {
+            detail = [weakSelf wchook_hapticLevelName];
+            return [WCHookSettingItem navigationItemWithIdentifier:identifier
+                                                             title:title
+                                                            detail:detail
+                                                     actionHandler:^{
+                [weakSelf wchook_cycleHapticLevel];
+            }];
+        }
         return [WCHookSettingItem navigationItemWithIdentifier:identifier
                                                          title:title
                                                         detail:detail
@@ -308,6 +322,53 @@ static NSArray<NSDictionary *> *WCHookSettingsConfiguration(void) {
     }
 
     return nil;
+}
+
+#pragma mark - 手势震动档位
+
+- (NSString *)wchook_hapticLevelName {
+    NSInteger level = [self wchook_hapticLevel];
+    switch (level) {
+        case 0: return @"关闭";
+        case 1: return @"轻";
+        case 2: return @"中";
+        case 3: return @"强";
+        default: return @"中";
+    }
+}
+
+- (NSInteger)wchook_hapticLevel {
+    NSDictionary *config = [self wchook_itemConfigurationForIdentifier:@"WCHookHapticLevel"];
+    NSString *defaultsKey = config[WCHookSettingConfigKeyDefaultsKey];
+    if (defaultsKey.length == 0) {
+        return 2;
+    }
+    NSInteger level = [[NSUserDefaults standardUserDefaults] integerForKey:defaultsKey];
+    // 首次使用时写入默认值
+    if (![[NSUserDefaults standardUserDefaults] objectForKey:defaultsKey]) {
+        level = 2;
+        [[NSUserDefaults standardUserDefaults] setInteger:level forKey:defaultsKey];
+    }
+    if (level < 0 || level > 3) {
+        level = 2;
+    }
+    return level;
+}
+
+- (void)wchook_cycleHapticLevel {
+    NSInteger level = [self wchook_hapticLevel];
+    level = (level + 1) % 4;
+    NSDictionary *config = [self wchook_itemConfigurationForIdentifier:@"WCHookHapticLevel"];
+    NSString *defaultsKey = config[WCHookSettingConfigKeyDefaultsKey];
+    if (defaultsKey.length > 0) {
+        [[NSUserDefaults standardUserDefaults] setInteger:level forKey:defaultsKey];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }
+    NSString *notification = config[WCHookSettingConfigKeyNotification];
+    if (notification.length == 0) {
+        notification = @"com.wchook.notification.swipeQuoteStateDidChange";
+    }
+    [[NSNotificationCenter defaultCenter] postNotificationName:notification object:nil];
 }
 
 - (BOOL)wchook_currentToggleValueForConfiguration:(NSDictionary *)configuration {

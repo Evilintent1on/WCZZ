@@ -556,6 +556,9 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
 - (void)wchook_handleSwipe:(UIPanGestureRecognizer *)gesture;
 - (void)wchook_resetSwipeAnimated:(BOOL)animated;
 - (void)wchook_triggerQuoteReply;
+- (void)wchook_insertAtMention:(NSString *)username nickname:(NSString *)nickname;
+- (id)wchook_findInputToolViewInView:(UIView *)view;
+- (UITextView *)wchook_findTextViewInView:(UIView *)view;
 - (void)onShowMsgReplyMenuItem:(id)sender;
 @end
 
@@ -600,8 +603,18 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
 
     gesture.enabled = YES;
 
-    if (!self.wchook_feedbackGenerator) {
-        self.wchook_feedbackGenerator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    // 根据设置创建对应强度的震动发生器（档位变化时重建）
+    NSInteger hapticLevel = [WCHookSettings() wchook_hapticLevel];
+    if (hapticLevel == 0) {
+        self.wchook_feedbackGenerator = nil;
+    } else {
+        UIImpactFeedbackStyle style = UIImpactFeedbackStyleMedium;
+        if (hapticLevel == 1) {
+            style = UIImpactFeedbackStyleLight;
+        } else if (hapticLevel == 3) {
+            style = UIImpactFeedbackStyleHeavy;
+        }
+        self.wchook_feedbackGenerator = [[UIImpactFeedbackGenerator alloc] initWithStyle:style];
     }
 }
 
@@ -678,12 +691,129 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
         return;
     }
 
+    // 如果开启了引用并艾特，先获取发送者信息
+    NSString *atUsername = nil;
+    NSString *atNickname = nil;
+    if ([WCHookSettings() isEnabledForKey:@"WCHookQuoteAndAt"]) {
+        @try {
+            id messageWrap = nil;
+            if ([self respondsToSelector:@selector(messageWrap)]) {
+                messageWrap = [self performSelector:@selector(messageWrap)];
+            } else if ([self respondsToSelector:@selector(getMessageWrap)]) {
+                messageWrap = [self performSelector:@selector(getMessageWrap)];
+            }
+            if (messageWrap) {
+                if ([messageWrap respondsToSelector:@selector(fromUsrName)]) {
+                    atUsername = [messageWrap performSelector:@selector(fromUsrName)];
+                }
+                // 尝试获取昵称用于显示
+                if ([self respondsToSelector:@selector(getContactDisplayName)]) {
+                    atNickname = [self performSelector:@selector(getContactDisplayName)];
+                }
+            }
+        } @catch (__unused NSException *exception) {
+        }
+    }
+
     dispatch_async(dispatch_get_main_queue(), ^{
       @try {
           [self onShowMsgReplyMenuItem:nil];
       } @catch (__unused NSException *exception) {
       }
+
+      // 引用触发后，插入艾特
+      if (atUsername.length > 0) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+          [self wchook_insertAtMention:atUsername nickname:atNickname];
+        });
+      }
     });
+}
+
+%new
+- (void)wchook_insertAtMention:(NSString *)username nickname:(NSString *)nickname {
+    if (username.length == 0) {
+        return;
+    }
+    @try {
+        // 找到输入工具栏
+        UIResponder *responder = self;
+        while (responder) {
+            if ([responder isKindOfClass:NSClassFromString(@"MMInputToolView")]) {
+                break;
+            }
+            responder = [responder nextResponder];
+        }
+        // 如果没找到，尝试从窗口找
+        id inputToolView = responder;
+        if (!inputToolView) {
+            UIWindow *window = [UIApplication sharedApplication].keyWindow;
+            inputToolView = [self wchook_findInputToolViewInView:window];
+        }
+        if (!inputToolView) {
+            return;
+        }
+        // 获取输入框
+        UITextView *textView = nil;
+        if ([inputToolView respondsToSelector:@selector(getTextView)]) {
+            textView = [inputToolView performSelector:@selector(getTextView)];
+        } else if ([inputToolView respondsToSelector:@selector(textView)]) {
+            textView = [inputToolView performSelector:@selector(textView)];
+        }
+        if (![textView isKindOfClass:[UITextView class]]) {
+            // 遍历子视图找 UITextView
+            textView = [self wchook_findTextViewInView:(UIView *)inputToolView];
+        }
+        if (!textView) {
+            return;
+        }
+        // 插入艾特文本
+        NSString *displayName = nickname.length > 0 ? nickname : username;
+        NSString *atText = [NSString stringWithFormat:@"@%@ ", displayName];
+        NSString *currentText = textView.text ?: @"";
+        // 避免重复插入
+        if ([currentText hasPrefix:atText]) {
+            return;
+        }
+        textView.text = [atText stringByAppendingString:currentText];
+        // 触发文本变化通知，让微信识别艾特
+        [[NSNotificationCenter defaultCenter] postNotificationName:UITextViewTextDidChangeNotification object:textView];
+    } @catch (__unused NSException *exception) {
+    }
+}
+
+%new
+- (id)wchook_findInputToolViewInView:(UIView *)view {
+    if (!view) {
+        return nil;
+    }
+    if ([view isKindOfClass:NSClassFromString(@"MMInputToolView")]) {
+        return view;
+    }
+    for (UIView *subview in view.subviews) {
+        id result = [self wchook_findInputToolViewInView:subview];
+        if (result) {
+            return result;
+        }
+    }
+    return nil;
+}
+
+%new
+- (UITextView *)wchook_findTextViewInView:(UIView *)view {
+    if (!view) {
+        return nil;
+    }
+    if ([view isKindOfClass:[UITextView class]]) {
+        return (UITextView *)view;
+    }
+    for (UIView *subview in view.subviews) {
+        UITextView *result = [self wchook_findTextViewInView:subview];
+        if (result) {
+            return result;
+        }
+    }
+    return nil;
 }
 
 - (void)handleTapForReferMsg:(id)sender {

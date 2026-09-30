@@ -34,7 +34,10 @@
     }
 
     UITableView *tableView = self.tableManager.tableView;
-    UIColor *backgroundColor = tableView.backgroundColor ?: [UIColor systemGroupedBackgroundColor];
+    UIColor *backgroundColor = [UIColor whiteColor];
+    if (@available(iOS 13.0, *)) {
+        backgroundColor = [UIColor systemBackgroundColor];
+    }
 
     UIView *topFillerView = [[UIView alloc] initWithFrame:CGRectZero];
     topFillerView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
@@ -49,6 +52,8 @@
     } else if (tableView) {
         [self.view addSubview:tableView];
     }
+
+    tableView.backgroundColor = backgroundColor;
 
     tableView.frame = frame;
     tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
