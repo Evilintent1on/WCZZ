@@ -478,7 +478,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     if (indexPath.section == MMSectionRemoved) {
         cell.textLabel.text = @"已移除菜单";
         cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu 项", (unsigned long)[self removedEntries].count];
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleDefault;
         if (!self.enabled) {
             cell.textLabel.textColor = [UIColor secondaryLabelColor];
