@@ -3,6 +3,10 @@
 #import "MessageMenuConfig.h"
 #import "MessageMenuBackup.h"
 #import "MessageMenuSettingsController.h"
+#import "WCHookSettingsManager.h"
+#import "WCHookSwipeUtilities.h"
+#import "WCHookMessageNavigator.h"
+#import "WCHookSettingsViewController.h"
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <Foundation/Foundation.h>
@@ -37,15 +41,22 @@ static id WCZZValue(id obj, NSString *key) {
 @implementation WCZZSettingsViewController
 - (instancetype)init { return [super initWithStyle:UITableViewStyleGrouped]; }
 - (void)viewDidLoad { [super viewDidLoad]; self.title = @"WCZZ"; self.tableView.tableFooterView = [UIView new]; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 2; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section { return 1; }
+- (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
+    if (section == 0) return @"红包";
+    if (section == 1) return @"消息";
+    return @"手势";
+}
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"wczz.setting"]; if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"wczz.setting"];
     c.accessoryView = nil; c.accessoryType = UITableViewCellAccessoryNone; c.detailTextLabel.text = nil;
     if (ip.section == 0) {
         c.textLabel.text=@"红包详情"; UISwitch *sw=[UISwitch new]; sw.tag=100; sw.on=WCZZBool(WCZZRedDetailKey,YES); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged]; c.accessoryView=sw;
-    } else {
+    } else if (ip.section == 1) {
         c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+    } else {
+        c.textLabel.text=@"左滑引用"; c.detailTextLabel.text=[WCHookSettings() summaryTextForSwipeQuote]; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     }
     return c;
 }
@@ -53,7 +64,9 @@ static id WCZZValue(id obj, NSString *key) {
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
     if (ip.section == 1) [self.navigationController pushViewController:[MessageMenuSettingsController new] animated:YES];
+    else if (ip.section == 2) [self.navigationController pushViewController:[WCHookSettingsViewController new] animated:YES];
 }
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
 @end
 
 #pragma mark - Red envelope summary overlay
@@ -533,11 +546,218 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
 %end
 %end
 
+#pragma mark - Swipe-to-quote (WCHook)
+
+@interface CommonMessageCellView (WCHookSwipe)
+@property(nonatomic, strong) UIPanGestureRecognizer *wchook_swipeGesture;
+@property(nonatomic, strong) UIImpactFeedbackGenerator *wchook_feedbackGenerator;
+@property(nonatomic, assign) BOOL wchook_feedbackTriggered;
+- (void)wchook_setupSwipeGestureIfNeeded;
+- (void)wchook_handleSwipe:(UIPanGestureRecognizer *)gesture;
+- (void)wchook_resetSwipeAnimated:(BOOL)animated;
+- (void)wchook_triggerQuoteReply;
+- (void)onShowMsgReplyMenuItem:(id)sender;
+@end
+
+%group WCZZSwipeHooks
+%hook CommonMessageCellView
+
+%property(nonatomic, strong) UIPanGestureRecognizer *wchook_swipeGesture;
+%property(nonatomic, strong) UIImpactFeedbackGenerator *wchook_feedbackGenerator;
+%property(nonatomic, assign) BOOL wchook_feedbackTriggered;
+
+- (void)didMoveToWindow {
+    %orig;
+
+    if (self.window) {
+        [self wchook_setupSwipeGestureIfNeeded];
+    } else {
+        [self wchook_resetSwipeAnimated:NO];
+    }
+}
+
+%new
+- (void)wchook_setupSwipeGestureIfNeeded {
+    if (![WCHookSettings() isEnabledForKey:@"WCHookSwipeQuote"]) {
+        if (self.wchook_swipeGesture) {
+            self.wchook_swipeGesture.enabled = NO;
+        }
+        return;
+    }
+
+    UIPanGestureRecognizer *gesture = self.wchook_swipeGesture;
+    if (!gesture) {
+        gesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(wchook_handleSwipe:)];
+        gesture.maximumNumberOfTouches = 1;
+        gesture.minimumNumberOfTouches = 1;
+        gesture.cancelsTouchesInView = YES;
+        gesture.delaysTouchesBegan = NO;
+        gesture.delaysTouchesEnded = NO;
+        gesture.delegate = (id<UIGestureRecognizerDelegate>)self;
+        [self addGestureRecognizer:gesture];
+        self.wchook_swipeGesture = gesture;
+    }
+
+    gesture.enabled = YES;
+
+    if (!self.wchook_feedbackGenerator) {
+        self.wchook_feedbackGenerator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    }
+}
+
+%new
+- (void)wchook_handleSwipe:(UIPanGestureRecognizer *)gesture {
+    if (!gesture) {
+        return;
+    }
+
+    if (![WCHookSettings() isEnabledForKey:@"WCHookSwipeQuote"]) {
+        [self wchook_resetSwipeAnimated:NO];
+        return;
+    }
+
+    NSArray<UIView *> *messageViews = [WCHookSwipeUtilities relatedMessageViewsForCommonView:self];
+    CGPoint translation = [gesture translationInView:self];
+    CGPoint velocity = [gesture velocityInView:self];
+
+    if ([WCHookSwipeUtilities shouldIgnoreTranslation:translation]) {
+        [WCHookSwipeUtilities applyTransform:CGAffineTransformIdentity toViews:messageViews];
+        if (gesture.state == UIGestureRecognizerStateEnded || gesture.state == UIGestureRecognizerStateCancelled) {
+            [self wchook_resetSwipeAnimated:NO];
+        }
+        return;
+    }
+
+    CGFloat threshold = [WCHookSwipeUtilities thresholdForView:self];
+
+    switch (gesture.state) {
+    case UIGestureRecognizerStateBegan: {
+        [self.wchook_feedbackGenerator prepare];
+        self.wchook_feedbackTriggered = NO;
+        break;
+    }
+    case UIGestureRecognizerStateChanged: {
+        CGFloat clamped = [WCHookSwipeUtilities clampedTranslation:translation.x threshold:threshold];
+        CGAffineTransform transform = CGAffineTransformMakeTranslation(clamped, 0.0f);
+        [WCHookSwipeUtilities applyTransform:transform toViews:messageViews];
+
+        if (!self.wchook_feedbackTriggered && translation.x <= -threshold) {
+            [self.wchook_feedbackGenerator impactOccurred];
+            self.wchook_feedbackTriggered = YES;
+        }
+        break;
+    }
+    case UIGestureRecognizerStateCancelled:
+    case UIGestureRecognizerStateEnded: {
+        if ([WCHookSwipeUtilities shouldTriggerWithTranslation:translation velocity:velocity threshold:threshold]) {
+            if (!self.wchook_feedbackTriggered) {
+                [self.wchook_feedbackGenerator impactOccurred];
+                self.wchook_feedbackTriggered = YES;
+            }
+            [self wchook_triggerQuoteReply];
+        }
+        [self wchook_resetSwipeAnimated:NO];
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+}
+
+%new
+- (void)wchook_resetSwipeAnimated:(BOOL)animated {
+    NSArray<UIView *> *messageViews = [WCHookSwipeUtilities relatedMessageViewsForCommonView:self];
+    [WCHookSwipeUtilities animateResetForViews:messageViews animated:animated];
+    self.wchook_feedbackTriggered = NO;
+}
+
+%new
+- (void)wchook_triggerQuoteReply {
+    if (![self respondsToSelector:@selector(onShowMsgReplyMenuItem:)]) {
+        return;
+    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+      @try {
+          [self onShowMsgReplyMenuItem:nil];
+      } @catch (__unused NSException *exception) {
+      }
+    });
+}
+
+- (void)handleTapForReferMsg:(id)sender {
+    if ([WCHookSettings() isEnabledForKey:@"WCHookTapReferJump"] && [WCHookMessageNavigator senderLooksLikeReferView:sender]) {
+        if ([WCHookMessageNavigator tryJumpFromCell:self]) {
+            return;
+        }
+    }
+    %orig;
+}
+
+- (void)handleTapReferMessage {
+    if ([WCHookSettings() isEnabledForKey:@"WCHookTapReferJump"]) {
+        if ([WCHookMessageNavigator tryJumpFromCell:self]) {
+            return;
+        }
+    }
+    %orig;
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
+    if (gestureRecognizer == self.wchook_swipeGesture) {
+        if (![WCHookSettings() isEnabledForKey:@"WCHookSwipeQuote"]) {
+            return NO;
+        }
+        UIPanGestureRecognizer *pan = (UIPanGestureRecognizer *)gestureRecognizer;
+        CGPoint velocity = [pan velocityInView:self];
+        if (![WCHookSwipeUtilities isVelocityEligible:velocity]) {
+            return NO;
+        }
+    }
+
+    BOOL result = %orig;
+    return result;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
+    if (gestureRecognizer == self.wchook_swipeGesture) {
+        return NO;
+    }
+    BOOL result = %orig;
+    return result;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRequireFailureOfGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
+    if (gestureRecognizer == self.wchook_swipeGesture && [otherGestureRecognizer isKindOfClass:[UIScreenEdgePanGestureRecognizer class]]) {
+        return YES;
+    }
+    BOOL result = %orig;
+    return result;
+}
+
+%end
+
+%hook MMInputToolView
+
+- (void)onTapMsgReplyView:(id)sender {
+    if ([WCHookSettings() isEnabledForKey:@"WCHookTapReferJump"] && [WCHookMessageNavigator senderLooksLikeReferView:sender]) {
+        if ([WCHookMessageNavigator tryJumpFromInputTool:self]) {
+            return;
+        }
+    }
+    %orig;
+}
+
+%end
+%end
+
 #pragma mark - Plugin registration / delayed hook installation
 
 static BOOL WCZZRegistered = NO;
 static BOOL WCZZRedHooksStarted = NO;
 static BOOL WCZZMenuHooksStarted = NO;
+static BOOL WCZZSwipeHooksStarted = NO;
 static NSInteger WCZZInstallAttempts = 0;
 
 static void WCZZRegisterPlugin(void) {
@@ -570,8 +790,15 @@ static void WCZZInstallHooksWhenReady(void) {
             WCZZMenuHooksStarted = YES;
             WCZZLog(@"menu hooks installed");
         }
+        if (!WCZZSwipeHooksStarted &&
+            objc_getClass("CommonMessageCellView") &&
+            objc_getClass("MMInputToolView")) {
+            %init(WCZZSwipeHooks);
+            WCZZSwipeHooksStarted = YES;
+            WCZZLog(@"swipe hooks installed");
+        }
         WCZZRegisterPlugin();
-        if ((!WCZZRedHooksStarted || !WCZZMenuHooksStarted || !WCZZRegistered) && WCZZInstallAttempts++ < 60) {
+        if ((!WCZZRedHooksStarted || !WCZZMenuHooksStarted || !WCZZSwipeHooksStarted || !WCZZRegistered) && WCZZInstallAttempts++ < 60) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
                 WCZZInstallHooksWhenReady();
