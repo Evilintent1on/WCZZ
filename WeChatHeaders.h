@@ -95,3 +95,58 @@
                             version:(NSString *)version
                          controller:(NSString *)controller;
 @end
+
+// WeChat native table view managers (used by WCHook settings UI).
+@interface MMTableViewInfo : NSObject
+- (UITableView *)getTableView;
+- (void)addSection:(id)section;
+- (void)insertSection:(id)section At:(NSInteger)index;
+@end
+
+@interface WCTableViewManager : NSObject
+- (instancetype)initWithFrame:(CGRect)frame style:(UITableViewStyle)style;
+- (void)addTableViewToSuperView:(UIView *)view;
+- (void)clearAllSection;
+- (void)addSection:(id)section;
+@property (nonatomic, strong) UITableView *tableView;
+@end
+
+@interface WCTableViewSectionManager : NSObject
++ (instancetype)sectionInfoHeader:(NSString *)header Footer:(NSString *)footer;
++ (instancetype)defaultSection;
+- (void)addCell:(id)cell;
+@end
+
+@interface WCTableViewCellManager : NSObject
++ (instancetype)switchCellForSel:(SEL)sel target:(id)target title:(NSString *)title on:(BOOL)on;
++ (instancetype)switchCellForSel:(SEL)sel
+                           target:(id)target
+                        leftImage:(UIImage *)leftImage
+                            title:(NSString *)title
+                             desc:(NSString *)desc
+                               on:(BOOL)on;
+@end
+
+@interface WCTableViewNormalCellManager : NSObject
++ (instancetype)normalCellForSel:(SEL)sel
+                           target:(id)target
+                            title:(NSString *)title
+                       rightValue:(NSString *)value
+                    accessoryType:(UITableViewCellAccessoryType)accessoryType;
++ (instancetype)normalCellForSel:(SEL)sel
+                           target:(id)target
+                            title:(NSString *)title
+                    accessoryType:(UITableViewCellAccessoryType)accessoryType;
+- (id)cellConfig;
+@end
+
+@interface WCTableViewCellNormalConfig : NSObject
+- (id)rightConfig;
+@end
+
+@interface WCTableViewCellRightConfig : NSObject
+- (void)setDetail:(NSString *)detail;
+@end
+
+@interface MinimizeViewController : UIViewController
+@end
