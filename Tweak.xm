@@ -148,7 +148,10 @@ static id WCZZValue(id obj, NSString *key) {
 - (void)wczzMain:(UISwitch *)sw { if(sw.tag==100) WCZZSetBool(WCZZRedDetailKey,sw.on); }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
-    if (ip.section == 1) [self.navigationController pushViewController:[MessageMenuSettingsController new] animated:YES];
+    if (ip.section == 1) {
+        self.navigationItem.backBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"" style:UIBarButtonItemStylePlain target:nil action:nil];
+        [self.navigationController pushViewController:[MessageMenuSettingsController new] animated:YES];
+    }
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
 @end

@@ -139,38 +139,6 @@ static NSMutableDictionary *MMWCZZEntryWithTitle(NSString *title, BOOL removed) 
 
 #pragma mark - Removed items controller
 
-static UIBarButtonItem *MMBlackBackButton(UIViewController *vc, SEL action) {
-    UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-    UIImage *sysChevron = vc.navigationController.navigationBar.backIndicatorImage;
-    UIColor *chevronColor = nil;
-    if (@available(iOS 13.0, *)) chevronColor = [UIColor labelColor];
-    else chevronColor = [UIColor blackColor];
-    if (sysChevron) {
-        [btn setImage:[sysChevron imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate] forState:UIControlStateNormal];
-        btn.tintColor = chevronColor;
-    } else {
-        CGSize size = CGSizeMake(12, 20);
-        UIGraphicsBeginImageContextWithOptions(size, NO, 0.0);
-        UIBezierPath *p = [UIBezierPath bezierPath];
-        CGFloat lw = 2.5;
-        [p moveToPoint:CGPointMake(size.width - 1, 1)];
-        [p addLineToPoint:CGPointMake(1, size.height / 2)];
-        [p addLineToPoint:CGPointMake(size.width - 1, size.height - 1)];
-        p.lineWidth = lw;
-        p.lineCapStyle = kCGLineCapRound;
-        p.lineJoinStyle = kCGLineJoinRound;
-        [chevronColor setStroke];
-        [p stroke];
-        UIImage *chevron = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-        [btn setImage:chevron forState:UIControlStateNormal];
-    }
-    [btn addTarget:vc action:action forControlEvents:UIControlEventTouchUpInside];
-    btn.frame = CGRectMake(0, 0, 30, 32);
-    btn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    return [[UIBarButtonItem alloc] initWithCustomView:btn];
-}
-
 @interface MMWCZZRemovedItemsController : UITableViewController
 - (instancetype)initWithEntries:(NSMutableArray<NSMutableDictionary *> *)entries
                   changeHandler:(void (^)(void))changeHandler;
@@ -182,10 +150,6 @@ static UIBarButtonItem *MMBlackBackButton(UIViewController *vc, SEL action) {
 @end
 
 @implementation MMWCZZRemovedItemsController
-
-- (void)mm_backTapped {
-    [self.navigationController popViewControllerAnimated:YES];
-}
 
 - (instancetype)initWithEntries:(NSMutableArray<NSMutableDictionary *> *)entries
                   changeHandler:(void (^)(void))changeHandler {
@@ -203,8 +167,6 @@ static UIBarButtonItem *MMBlackBackButton(UIViewController *vc, SEL action) {
     self.tableView.tableFooterView = [UIView new];
     self.tableView.rowHeight = 55;
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.navigationItem.hidesBackButton = YES;
-    self.navigationItem.leftBarButtonItem = MMBlackBackButton(self, @selector(mm_backTapped));
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
         self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
@@ -322,8 +284,6 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     self.tableView.rowHeight = 55;
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     self.navigationItem.backBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"" style:UIBarButtonItemStylePlain target:nil action:nil];
-    self.navigationItem.hidesBackButton = YES;
-    self.navigationItem.leftBarButtonItem = MMBlackBackButton(self, @selector(mm_backTapped));
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
         self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
@@ -343,10 +303,6 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     [self reloadConfig];
     [self.tableView reloadData];
     [self applyEditingState];
-}
-
-- (void)mm_backTapped {
-    [self.navigationController popViewControllerAnimated:YES];
 }
 
 #pragma mark - Config
