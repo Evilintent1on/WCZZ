@@ -81,7 +81,11 @@ static NSMutableDictionary *MMWCZZEntryWithTitle(NSString *title, BOOL removed) 
 
 - (instancetype)initWithEntries:(NSMutableArray<NSMutableDictionary *> *)entries
                   changeHandler:(void (^)(void))changeHandler {
-    self = [super initWithStyle:UITableViewStyleGrouped];
+    if (@available(iOS 13.0, *)) {
+        self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    } else {
+        self = [super initWithStyle:UITableViewStyleGrouped];
+    }
     if (self) {
         _allEntries = entries;
         _changeHandler = [changeHandler copy];
@@ -201,7 +205,11 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
 @implementation MessageMenuSettingsController
 
 - (instancetype)init {
-    self = [super initWithStyle:UITableViewStyleGrouped];
+    if (@available(iOS 13.0, *)) {
+        self = [super initWithStyle:UITableViewStyleInsetGrouped];
+    } else {
+        self = [super initWithStyle:UITableViewStyleGrouped];
+    }
     if (self) [self reloadConfig];
     return self;
 }
