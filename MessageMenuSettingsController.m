@@ -11,6 +11,7 @@
 @property (nonatomic, assign) UIRectCorner corners;
 @property (nonatomic, assign) BOOL showSeparator;
 @property (nonatomic, strong) UIColor *cardColor;
+
 @end
 @implementation MMCardBgView
 - (void)layoutSubviews {
@@ -26,7 +27,7 @@
     else card.backgroundColor = [UIColor whiteColor];
     CGFloat inset = 16.0;
     card.frame = CGRectMake(inset, 0, self.bounds.size.width - inset*2, self.bounds.size.height);
-    card.layer.cornerRadius = 25.0;
+    card.layer.cornerRadius = 20.0;
     card.layer.masksToBounds = YES;
     if (@available(iOS 11.0, *)) {
         CACornerMask mask = 0;
@@ -90,8 +91,6 @@ typedef NS_ENUM(NSInteger, MMSection) {
 
 typedef NS_ENUM(NSInteger, MMActionRow) {
     MMActionRowRestoreDefaults = 0,
-    MMActionRowBackup,
-    MMActionRowRestore,
     MMActionRowCount,
 };
 
@@ -261,11 +260,10 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
 
 #pragma mark - Main settings controller
 
-@interface MessageMenuSettingsController () <UIDocumentPickerDelegate>
+@interface MessageMenuSettingsController ()
 @property (nonatomic, strong) NSMutableArray<NSMutableDictionary *> *entries;
 @property (nonatomic, assign) BOOL enabled;
 @property (nonatomic, assign) BOOL sortingEnabled;
-@property (nonatomic, assign) BOOL creatingBackup;
 @end
 
 @implementation MessageMenuSettingsController
@@ -356,7 +354,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     switch ((MMSection)section) {
         case MMSectionKept:     return @"菜单项";
         case MMSectionRemoved:  return @"已移除";
-        case MMSectionActions:  return @"更多";
+        case MMSectionActions:  return nil;
         default:                return nil;
     }
 }
@@ -454,12 +452,6 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
             cell.textLabel.text = @"恢复默认菜单";
             cell.textLabel.textColor = [UIColor systemRedColor];
             break;
-        case MMActionRowBackup:
-            cell.textLabel.text = @"备份配置";
-            break;
-        case MMActionRowRestore:
-            cell.textLabel.text = @"还原配置";
-            break;
         default:
             break;
     }
@@ -485,8 +477,6 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     if (indexPath.section == MMSectionActions) {
         switch (indexPath.row) {
             case MMActionRowRestoreDefaults: [self confirmRestoreDefaults]; break;
-            case MMActionRowBackup:           [self backupTapped]; break;
-            case MMActionRowRestore:          [self restoreTapped]; break;
             default: break;
         }
     }
@@ -664,85 +654,6 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
         [self applyEditingState];
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-- (void)backupTapped {
-    if (self.creatingBackup) return;
-    [self persistConfig];
-    self.creatingBackup = YES;
-    __weak typeof(self) weakSelf = self;
-    MMMenuCreateBackupFileAsync(^(NSURL *url, NSString *errorMessage) {
-        __strong typeof(weakSelf) self = weakSelf;
-        if (!self) return;
-        self.creatingBackup = NO;
-        if (!url) {
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"备份失败"
-                                                                           message:(errorMessage ?: @"无法生成备份文件。")
-                                                                    preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-            [self presentViewController:alert animated:YES completion:nil];
-            return;
-        }
-        UIActivityViewController *activity = [[UIActivityViewController alloc]
-            initWithActivityItems:@[url] applicationActivities:nil];
-        UIPopoverPresentationController *popover = activity.popoverPresentationController;
-        if (popover) {
-            popover.sourceView = self.view;
-            popover.sourceRect = CGRectMake(CGRectGetMidX(self.view.bounds),
-                                            CGRectGetMidY(self.view.bounds), 1, 1);
-            popover.permittedArrowDirections = 0;
-        }
-        [self presentViewController:activity animated:YES completion:nil];
-    });
-}
-
-- (void)restoreTapped {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"还原配置"
-                                                                   message:@"选择有效备份后，当前配置会被备份文件覆盖。"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    __weak typeof(self) weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:@"继续选择" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        (void)a;
-        [weakSelf presentRestorePicker];
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-- (void)presentRestorePicker {
-    UIDocumentPickerViewController *picker = nil;
-    if (@available(iOS 14.0, *)) {
-        picker = [[UIDocumentPickerViewController alloc]
-                  initForOpeningContentTypes:@[[UTType typeWithIdentifier:@"public.zip-archive"],
-                                               [UTType typeWithIdentifier:@"public.data"]]
-                  asCopy:YES];
-    } else {
-        picker = [[UIDocumentPickerViewController alloc]
-                  initWithDocumentTypes:@[@"public.zip-archive", @"public.data"]
-                  inMode:UIDocumentPickerModeOpen];
-    }
-    picker.delegate = self;
-    picker.allowsMultipleSelection = NO;
-    [self presentViewController:picker animated:YES completion:nil];
-}
-
-- (void)documentPicker:(UIDocumentPickerViewController *)controller
-didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    NSURL *url = urls.firstObject;
-    if (!url) return;
-    NSError *error = nil;
-    BOOL restored = MMMenuRestoreFromBackupURL(url, &error);
-    if (restored) {
-        [self reloadConfig];
-        [self.tableView reloadData];
-        [self applyEditingState];
-    }
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:(restored ? @"还原完成" : @"无法还原")
-                                                                   message:(restored ? @"配置已还原并立即生效，无需重启微信。"
-                                                                                     : (error.localizedDescription ?: @"所选文件不是有效的配置备份。"))
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 

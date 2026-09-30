@@ -30,7 +30,7 @@
     else card.backgroundColor = [UIColor whiteColor];
     CGFloat inset = 16.0;
     card.frame = CGRectMake(inset, 0, self.bounds.size.width - inset*2, self.bounds.size.height);
-    card.layer.cornerRadius = 25.0;
+    card.layer.cornerRadius = 20.0;
     card.layer.masksToBounds = YES;
     if (@available(iOS 11.0, *)) {
         CACornerMask mask = 0;
@@ -139,7 +139,7 @@ static id WCZZValue(id obj, NSString *key) {
         sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else {
-        c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+        c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryNone;
     }
     return c;
 }
