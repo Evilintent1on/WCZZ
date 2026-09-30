@@ -855,9 +855,9 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
         if ([self respondsToSelector:sel]) {
             @try {
                 if ([selName hasSuffix:@":"]) {
-                    [self performSelector:sel withObject:nil];
+                    ((void (*)(id, SEL, id))objc_msgSend)(self, sel, nil);
                 } else {
-                    [self performSelector:sel];
+                    ((void (*)(id, SEL))objc_msgSend)(self, sel);
                 }
                 return;
             } @catch (__unused NSException *exception) {
@@ -875,9 +875,9 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
         if ([self respondsToSelector:sel]) {
             @try {
                 if ([selName hasSuffix:@":"]) {
-                    [self performSelector:sel withObject:nil];
+                    ((void (*)(id, SEL, id))objc_msgSend)(self, sel, nil);
                 } else {
-                    [self performSelector:sel];
+                    ((void (*)(id, SEL))objc_msgSend)(self, sel);
                 }
                 return;
             } @catch (__unused NSException *exception) {
