@@ -23,7 +23,7 @@
         [self addSubview:card];
     }
     if (self.cardColor) card.backgroundColor = self.cardColor;
-    else if (@available(iOS 13.0, *)) card.backgroundColor = [UIColor systemBackgroundColor];
+    else if (@available(iOS 13.0, *)) card.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
     else card.backgroundColor = [UIColor whiteColor];
     CGFloat inset = 16.0;
     card.frame = CGRectMake(inset, 0, self.bounds.size.width - inset*2, self.bounds.size.height);
