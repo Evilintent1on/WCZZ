@@ -51,6 +51,20 @@
     return nil;
 }
 
++ (void)wchook_applyWhiteBackground:(id)cell {
+    if (!cell) {
+        return;
+    }
+    UIColor *white = [UIColor whiteColor];
+    if (@available(iOS 13.0, *)) {
+        white = [UIColor systemBackgroundColor];
+    }
+    SEL setter = @selector(setBackgroundColor:);
+    if ([cell respondsToSelector:setter]) {
+        ((void (*)(id, SEL, id))objc_msgSend)(cell, setter, white);
+    }
+}
+
 + (nullable id)switchCellWithTitle:(NSString *)title
                         descriptor:(NSString *)descriptor
                                 on:(BOOL)isOn
@@ -63,7 +77,7 @@
 
     SEL selectorWithDescription = @selector(switchCellForSel:target:leftImage:title:desc:on:);
     if ([cellClass respondsToSelector:selectorWithDescription]) {
-        return ((id (*)(Class, SEL, SEL, id, id, id, id, BOOL))objc_msgSend)(cellClass,
+        id cell = ((id (*)(Class, SEL, SEL, id, id, id, id, BOOL))objc_msgSend)(cellClass,
                                                                             selectorWithDescription,
                                                                             selector,
                                                                             target,
@@ -71,16 +85,20 @@
                                                                             title,
                                                                             descriptor,
                                                                             isOn);
+        [self wchook_applyWhiteBackground:cell];
+        return cell;
     }
 
     SEL fallbackSelector = @selector(switchCellForSel:target:title:on:);
     if ([cellClass respondsToSelector:fallbackSelector]) {
-        return ((id (*)(Class, SEL, SEL, id, id, BOOL))objc_msgSend)(cellClass,
+        id cell = ((id (*)(Class, SEL, SEL, id, id, BOOL))objc_msgSend)(cellClass,
                                                                      fallbackSelector,
                                                                      selector,
                                                                      target,
                                                                      title,
                                                                      isOn);
+        [self wchook_applyWhiteBackground:cell];
+        return cell;
     }
     return nil;
 }
@@ -97,23 +115,27 @@
 
     SEL detailSelector = @selector(normalCellForSel:target:title:rightValue:accessoryType:);
     if ([normalClass respondsToSelector:detailSelector]) {
-        return ((id (*)(Class, SEL, SEL, id, id, id, long long))objc_msgSend)(normalClass,
+        id cell = ((id (*)(Class, SEL, SEL, id, id, id, long long))objc_msgSend)(normalClass,
                                                                               detailSelector,
                                                                               selector,
                                                                               target,
                                                                               title,
                                                                               detail,
                                                                               accessoryType);
+        [self wchook_applyWhiteBackground:cell];
+        return cell;
     }
 
     SEL fallbackSelector = @selector(normalCellForSel:target:title:accessoryType:);
     if ([normalClass respondsToSelector:fallbackSelector]) {
-        return ((id (*)(Class, SEL, SEL, id, id, long long))objc_msgSend)(normalClass,
+        id cell = ((id (*)(Class, SEL, SEL, id, id, long long))objc_msgSend)(normalClass,
                                                                           fallbackSelector,
                                                                           selector,
                                                                           target,
                                                                           title,
                                                                           accessoryType);
+        [self wchook_applyWhiteBackground:cell];
+        return cell;
     }
     return nil;
 }
