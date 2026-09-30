@@ -3,7 +3,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@class WCTableViewManager;
+@interface WCTableViewManager : NSObject
+@end
 @class UITableView;
 
 @interface WCHookTableViewFactory : NSObject
