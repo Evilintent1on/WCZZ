@@ -59,13 +59,6 @@ static id WCZZValue(id obj, NSString *key) {
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"wczz.setting"]; if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"wczz.setting"];
     c.accessoryView = nil; c.accessoryType = UITableViewCellAccessoryNone; c.detailTextLabel.text = nil;
-    if (@available(iOS 13.0, *)) {
-        c.backgroundColor = [UIColor systemBackgroundColor];
-        c.contentView.backgroundColor = [UIColor systemBackgroundColor];
-    } else {
-        c.backgroundColor = [UIColor whiteColor];
-        c.contentView.backgroundColor = [UIColor whiteColor];
-    }
     if (ip.section == 0) {
         c.textLabel.text=@"红包详情"; UISwitch *sw=[UISwitch new]; sw.tag=100; sw.on=WCZZBool(WCZZRedDetailKey,YES); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged]; c.accessoryView=sw;
     } else {
