@@ -147,9 +147,21 @@ static NSMutableDictionary *MMWCZZEntryWithTitle(NSString *title, BOOL removed) 
 @interface MMWCZZRemovedItemsController ()
 @property (nonatomic, strong) NSMutableArray<NSMutableDictionary *> *allEntries;
 @property (nonatomic, copy) void (^changeHandler)(void);
+@property (nonatomic, strong) UIColor *savedTintColor;
 @end
 
 @implementation MMWCZZRemovedItemsController
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    _savedTintColor = self.navigationController.navigationBar.tintColor;
+    self.navigationController.navigationBar.tintColor = [UIColor blackColor];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    if (_savedTintColor) self.navigationController.navigationBar.tintColor = _savedTintColor;
+}
 
 - (instancetype)initWithEntries:(NSMutableArray<NSMutableDictionary *> *)entries
                   changeHandler:(void (^)(void))changeHandler {
@@ -264,6 +276,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
 @property (nonatomic, strong) NSMutableArray<NSMutableDictionary *> *entries;
 @property (nonatomic, assign) BOOL enabled;
 @property (nonatomic, assign) BOOL sortingEnabled;
+@property (nonatomic, strong) UIColor *savedTintColor;
 @end
 
 @implementation MessageMenuSettingsController
@@ -280,6 +293,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     self.tableView.tableFooterView = [UIView new];
     self.tableView.rowHeight = 55;
     self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
+    self.navigationItem.backBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"" style:UIBarButtonItemStylePlain target:nil action:nil];
     if (@available(iOS 13.0, *)) {
         self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
         self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
@@ -299,6 +313,13 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     [self reloadConfig];
     [self.tableView reloadData];
     [self applyEditingState];
+    _savedTintColor = self.navigationController.navigationBar.tintColor;
+    self.navigationController.navigationBar.tintColor = [UIColor blackColor];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    if (_savedTintColor) self.navigationController.navigationBar.tintColor = _savedTintColor;
 }
 
 #pragma mark - Config
