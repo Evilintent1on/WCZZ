@@ -6,7 +6,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = wczz
 wczz_FILES = Tweak.xm MessageMenuConfig.m MessageMenuBackup.m MessageMenuSettingsController.m
-wczz_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
+wczz_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -DPACKAGE_VERSION=@\"$(shell grep '^Version:' control | cut -d' ' -f2)\"
 wczz_FRAMEWORKS = UIKit Foundation
 
 include $(THEOS_MAKE_PATH)/tweak.mk
