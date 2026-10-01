@@ -478,6 +478,10 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
             ]];
             // 排序行不需要选中高光，避免按住时阴影超出卡片圆角
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
+            // 关掉拖动抬起时的系统阴影
+            cell.layer.shadowOpacity = 0;
+            cell.layer.shadowRadius = 0;
+            cell.contentView.layer.shadowOpacity = 0;
             // 把系统排序按钮往左挪 16pt，避免贴边（layout 后执行）
             dispatch_async(dispatch_get_main_queue(), ^{
                 for (UIView *sub in cell.subviews) {
