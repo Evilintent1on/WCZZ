@@ -169,12 +169,12 @@ static NSString *const kWCZZGroupsOnlyKey = @"WCZZGroupsOnly";
 
 - (id)sessionAtIndexPath:(NSIndexPath *)indexPath {
     if (!self.chatGrouping) {
-        NSInteger row = indexPath.row;
+        NSInteger row = [indexPath indexAtPosition:1];
         if (row < self.normalSessions.count) return self.normalSessions[row];
         return nil;
     }
-    NSInteger section = indexPath.section;
-    NSInteger row = indexPath.row;
+    NSInteger section = [indexPath indexAtPosition:0];
+    NSInteger row = [indexPath indexAtPosition:1];
     NSInteger idx = 0;
     if (self.topSessions.count > 0) {
         if (section == idx) {
