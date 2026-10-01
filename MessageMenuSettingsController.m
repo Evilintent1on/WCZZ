@@ -342,26 +342,23 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     [self.tableView addGestureRecognizer:lp];
 }
 
+// 递归去掉 view 树里所有阴影
+static void MMRemoveShadows(UIView *v) {
+    if (v.layer.shadowOpacity > 0) {
+        v.layer.shadowOpacity = 0;
+        v.layer.shadowRadius = 0;
+    }
+    for (UIView *sub in v.subviews) MMRemoveShadows(sub);
+}
+
 - (void)mm_reorderLongPress:(UILongPressGestureRecognizer *)g {
     if (g.state != UIGestureRecognizerStateBegan) return;
-    // 拖动快照是系统后加到 window 上的，延迟一拍找到并去掉阴影
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        for (UIWindow *w in [UIApplication sharedApplication].windows) {
-            for (UIView *sub in w.subviews) {
-                if (sub.layer.shadowOpacity > 0) {
-                    sub.layer.shadowOpacity = 0;
-                    sub.layer.shadowRadius = 0;
-                }
-                // 快照可能包一层，再往下一级找
-                for (UIView *s2 in sub.subviews) {
-                    if (s2.layer.shadowOpacity > 0) {
-                        s2.layer.shadowOpacity = 0;
-                        s2.layer.shadowRadius = 0;
-                    }
-                }
-            }
-        }
-    });
+    // 拖动快照是系统后加的，连续几次扫整个视图树去掉阴影
+    for (int i = 1; i <= 4; i++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            for (UIWindow *w in [UIApplication sharedApplication].windows) MMRemoveShadows(w);
+        });
+    }
 }
 
 - (void)viewWillAppear:(BOOL)animated {
