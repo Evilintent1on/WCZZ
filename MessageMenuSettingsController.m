@@ -473,9 +473,11 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
             titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
             [cell.contentView addSubview:titleLabel];
             [NSLayoutConstraint activateConstraints:@[
-                [titleLabel.leadingAnchor constraintEqualToAnchor:cell.contentView.leadingAnchor constant:16],
+                [titleLabel.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:32],
                 [titleLabel.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]
             ]];
+            // 排序行不需要选中高光，避免按住时阴影超出卡片圆角
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
             // 把系统排序按钮往左挪 16pt，避免贴边（layout 后执行）
             dispatch_async(dispatch_get_main_queue(), ^{
                 for (UIView *sub in cell.subviews) {
