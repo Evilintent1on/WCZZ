@@ -599,6 +599,15 @@ moveRowAtIndexPath:(NSIndexPath *)source
         }
     }
     [self configurationDidChange];
+    // 拖动后 cell 被复用移动，圆角按旧行号画的会错位，刷新可见 cell 的圆角
+    dispatch_async(dispatch_get_main_queue(), ^{
+        for (NSIndexPath *ip in [tableView indexPathsForVisibleRows]) {
+            if (ip.section == MMSectionKept) {
+                UITableViewCell *c = [tableView cellForRowAtIndexPath:ip];
+                if (c) MMApplyCard(c, tableView, ip);
+            }
+        }
+    });
 }
 
 - (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath {
