@@ -464,6 +464,8 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
         cell.imageView.image = nil;
         if (self.enabled && self.sortingEnabled) {
             cell.showsReorderControl = YES;
+            // 编辑模式系统会自动缩进，减小左边距让文字对齐
+            cell.layoutMargins = UIEdgeInsetsMake(0, 16, 0, 16);
         } else {
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
             UISwitch *sw = [UISwitch new];
