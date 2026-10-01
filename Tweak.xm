@@ -3,55 +3,9 @@
 #import "MessageMenuConfig.h"
 #import "MessageMenuBackup.h"
 #import "MessageMenuSettingsController.h"
-#import "WCZZSessionGroupManager.h"
-#import "WCZZGroupSettingsViewController.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 
-// 分组 header 右上角 "+" 按钮点击：弹出菜单（一键已读 / 分组设置）
-static void WCZZShowGroupHeaderMenu(UIViewController *hostVC) {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:nil
-                                                                   message:nil
-                                                            preferredStyle:UIAlertControllerStyleActionSheet];
-    // 一键已读（第一个）
-    [alert addAction:[UIAlertAction actionWithTitle:@"一键已读" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        WCZZSessionGroupManager *mgr = [WCZZSessionGroupManager sharedInstance];
-        for (id session in mgr.groupSessions) {
-            @try {
-                NSString *username = [session valueForKey:@"m_nsUsrName"];
-                if (![username isKindOfClass:[NSString class]] || username.length == 0) continue;
-                // 调用微信会话管理器的清除未读方法
-                Class mgrClass = objc_getClass("MMSessionMgr");
-                if (!mgrClass) continue;
-                id sessionMgr = nil;
-                SEL sharedSel = NSSelectorFromString(@"sharedInstance");
-                if ([mgrClass respondsToSelector:sharedSel]) {
-                    sessionMgr = ((id (*)(id, SEL))objc_msgSend)(mgrClass, sharedSel);
-                }
-                if (!sessionMgr) continue;
-                SEL clearSel = NSSelectorFromString(@"ChangeSessionUnReadCount:to:");
-                if ([sessionMgr respondsToSelector:clearSel]) {
-                    ((void (*)(id, SEL, id, unsigned int))objc_msgSend)(sessionMgr, clearSel, username, 0);
-                }
-            } @catch (NSException *e) {}
-        }
-    }]];
-    // 分组设置（第二个）
-    [alert addAction:[UIAlertAction actionWithTitle:@"分组设置" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        WCZZGroupSettingsViewController *vc = [[WCZZGroupSettingsViewController alloc] init];
-        UINavigationController *nav = hostVC.navigationController;
-        if (nav) {
-            [nav pushViewController:vc animated:YES];
-        } else {
-            [hostVC presentViewController:vc animated:YES completion:nil];
-        }
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    // iPad 兼容
-    alert.popoverPresentationController.sourceView = hostVC.view;
-    alert.popoverPresentationController.sourceRect = CGRectMake(hostVC.view.bounds.size.width - 60, 100, 40, 40);
-    [hostVC presentViewController:alert animated:YES completion:nil];
-}
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <Foundation/Foundation.h>
@@ -168,17 +122,15 @@ static id WCZZValue(id obj, NSString *key) {
         self.view.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
     }
 }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 2; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
-    if (section == 2) return 2;  // 群聊分组：2个开关
     return 1;
 }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section { return 28.0; }
-- (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section { return section == 2 ? 0.01 : 8.0; }
+- (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section { return 8.0; }
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
     if (section == 0) return @"红包";
-    if (section == 1) return @"消息";
-    return @"群聊分组";
+    return @"消息";
 }
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"wczz.setting"]; if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"wczz.setting"];
@@ -193,33 +145,10 @@ static id WCZZValue(id obj, NSString *key) {
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else if (ip.section == 1) {
         c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryNone;
-    } else {
-        // 群聊分组 section
-        c.selectionStyle=UITableViewCellSelectionStyleNone;
-        UISwitch *sw=[UISwitch new];
-        sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
-        [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
-        [sw addTarget:self action:@selector(wczzGroup:) forControlEvents:UIControlEventValueChanged];
-        WCZZSessionGroupManager *mgr = [WCZZSessionGroupManager sharedInstance];
-        if (ip.row == 0) {
-            c.textLabel.text=@"聊天分组"; sw.tag=200; sw.on=mgr.chatGrouping;
-        } else {
-            c.textLabel.text=@"仅显示群聊"; sw.tag=201; sw.on=mgr.groupsOnly;
-        }
     }
     return c;
 }
 - (void)wczzMain:(UISwitch *)sw { if(sw.tag==100) WCZZSetBool(WCZZRedDetailKey,sw.on); }
-- (void)wczzGroup:(UISwitch *)sw {
-    WCZZSessionGroupManager *mgr = [WCZZSessionGroupManager sharedInstance];
-    if (sw.tag == 200) {
-        mgr.chatGrouping = sw.on;
-    } else if (sw.tag == 201) {
-        mgr.groupsOnly = sw.on;
-    }
-    // 触发分组重建：重新获取会话列表
-    // 下次 GetSessionInfoList 调用时会自动重建
-}
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
     if (ip.section == 1) [self.navigationController pushViewController:[MessageMenuSettingsController new] animated:YES];
@@ -705,111 +634,11 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
 %end
 %end
 
-#pragma mark - Session grouping (群聊分组)
-
-%group WCZZSessionGroupHooks
-
-// Hook 会话管理器的会话列表获取，触发分组重建
-%hook MMSessionMgr
-
-- (id)GetSessionInfoList {
-    id result = %orig;
-    WCZZSessionGroupManager *mgr = [WCZZSessionGroupManager sharedInstance];
-    if (mgr.chatGrouping && [result isKindOfClass:[NSArray class]]) {
-        [mgr rebuildSessions:result groupChats:YES];
-    }
-    return result;
-}
-
-// 会话新增/修改时触发重建
-- (void)AddOrModifySession:(id)session withNotifyFlag:(unsigned int)flag immediateRefresh:(BOOL)refresh {
-    %orig(session, flag, refresh);
-    WCZZSessionGroupManager *mgr = [WCZZSessionGroupManager sharedInstance];
-    if (mgr.chatGrouping) {
-        // 异步重建，避免阻塞
-        dispatch_async(dispatch_get_main_queue(), ^{
-            id list = [self GetSessionInfoList];
-            if ([list isKindOfClass:[NSArray class]]) {
-                [mgr rebuildSessions:list groupChats:YES];
-            }
-        });
-    }
-}
-
-%end
-
-// Hook 主界面会话列表数据源，实现分组显示
-%hook NewMainFrameViewController
-
-// 按 indexPath 取会话 → 按分组返回
-- (id)logicGetSessionAtIndexPath:(id)indexPath {
-    WCZZSessionGroupManager *mgr = [WCZZSessionGroupManager sharedInstance];
-    if (mgr.chatGrouping && [indexPath isKindOfClass:[NSIndexPath class]]) {
-        id session = [mgr sessionAtIndexPath:(NSIndexPath *)indexPath];
-        if (session) return session;
-    }
-    return %orig(indexPath);
-}
-
-// 取某 section 的行数 → 返回该分组的会话数
-- (NSInteger)logicGetCountForSection:(NSInteger)section {
-    WCZZSessionGroupManager *mgr = [WCZZSessionGroupManager sharedInstance];
-    if (mgr.chatGrouping) {
-        NSInteger count = [mgr numberOfSessionsInSection:section];
-        // 如果分组数据有效，用分组的 count
-        if ([mgr numberOfSections] > 1) {
-            return count;
-        }
-    }
-    return %orig(section);
-}
-
-// 分组 header 加 "+" 按钮
-- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section {
-    UIView *header = %orig(tableView, section);
-    WCZZSessionGroupManager *mgr = [WCZZSessionGroupManager sharedInstance];
-    if (!mgr.chatGrouping) return header;
-    if ([mgr numberOfSections] <= 1) return header;
-
-    // 判断这个 section 是不是群聊分组
-    NSString *title = [mgr titleForSection:section];
-    if (![title isEqualToString:@"群聊"]) return header;
-
-    // 避免重复添加
-    if ([header viewWithTag:0x575A02]) return header;
-
-    UIButton *plusBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    plusBtn.tag = 0x575A02;
-    [plusBtn setTitle:@"+" forState:UIControlStateNormal];
-    plusBtn.titleLabel.font = [UIFont systemFontOfSize:24];
-    // 用 target-action 绑定到 self（NewMainFrameViewController）
-    [plusBtn addTarget:self action:@selector(wczzGroupHeaderPlusTapped) forControlEvents:UIControlEventTouchUpInside];
-    plusBtn.translatesAutoresizingMaskIntoConstraints = NO;
-    [header addSubview:plusBtn];
-    [NSLayoutConstraint activateConstraints:@[
-        [plusBtn.trailingAnchor constraintEqualToAnchor:header.trailingAnchor constant:-16],
-        [plusBtn.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
-        [plusBtn.widthAnchor constraintEqualToConstant:44],
-        [plusBtn.heightAnchor constraintEqualToConstant:44]
-    ]];
-    return header;
-}
-
-// "+" 按钮点击
-- (void)wczzGroupHeaderPlusTapped {
-    WCZZShowGroupHeaderMenu(self);
-}
-
-%end
-
-%end
-
 #pragma mark - Plugin registration / delayed hook installation
 
 static BOOL WCZZRegistered = NO;
 static BOOL WCZZRedHooksStarted = NO;
 static BOOL WCZZMenuHooksStarted = NO;
-static BOOL WCZZSessionGroupHooksStarted = NO;
 static NSInteger WCZZInstallAttempts = 0;
 
 static void WCZZRegisterPlugin(void) {
@@ -842,15 +671,8 @@ static void WCZZInstallHooksWhenReady(void) {
             WCZZMenuHooksStarted = YES;
             WCZZLog(@"menu hooks installed");
         }
-        if (!WCZZSessionGroupHooksStarted &&
-            objc_getClass("MMSessionMgr") &&
-            objc_getClass("NewMainFrameViewController")) {
-            %init(WCZZSessionGroupHooks);
-            WCZZSessionGroupHooksStarted = YES;
-            WCZZLog(@"session group hooks installed");
-        }
         WCZZRegisterPlugin();
-        if ((!WCZZRedHooksStarted || !WCZZMenuHooksStarted || !WCZZSessionGroupHooksStarted || !WCZZRegistered) && WCZZInstallAttempts++ < 60) {
+        if ((!WCZZRedHooksStarted || !WCZZMenuHooksStarted || !WCZZRegistered) && WCZZInstallAttempts++ < 60) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
                 WCZZInstallHooksWhenReady();

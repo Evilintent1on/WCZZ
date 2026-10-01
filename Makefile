@@ -5,7 +5,7 @@ THEOS_PACKAGE_SCHEME = rootless
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = wczz
-wczz_FILES = Tweak.xm MessageMenuConfig.m MessageMenuBackup.m MessageMenuSettingsController.m WCZZSessionGroupManager.m WCZZGroupSettingsViewController.m
+wczz_FILES = Tweak.xm MessageMenuConfig.m MessageMenuBackup.m MessageMenuSettingsController.m
 wczz_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 wczz_FRAMEWORKS = UIKit Foundation
 

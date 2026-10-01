@@ -150,10 +150,3 @@
 
 @interface MinimizeViewController : UIViewController
 @end
-
-// 会话管理器（群聊分组用）
-@interface MMSessionMgr : NSObject
-- (id)GetSessionInfoList;
-- (id)GetSessionByUserName:(NSString *)userName;
-- (void)AddOrModifySession:(id)session withNotifyFlag:(unsigned int)flag immediateRefresh:(BOOL)refresh;
-@end
