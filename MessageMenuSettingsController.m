@@ -589,16 +589,19 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
             handle.tag = 997;
             handle.text = @"\u2261";
             handle.textColor = [UIColor tertiaryLabelColor];
-            handle.font = [UIFont systemFontOfSize:22];
+            handle.font = [UIFont systemFontOfSize:30];
             handle.translatesAutoresizingMaskIntoConstraints = NO;
             handle.userInteractionEnabled = YES;
             [cell.contentView addSubview:handle];
             [NSLayoutConstraint activateConstraints:@[
-                [handle.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-32],
-                [handle.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]
+                [handle.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-24],
+                [handle.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor],
+                [handle.widthAnchor constraintEqualToConstant:48],
+                [handle.heightAnchor constraintEqualToConstant:48]
             ]];
+            handle.textAlignment = NSTextAlignmentCenter;
             UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(mm_handleDrag:)];
-            lp.minimumPressDuration = 0.25;
+            lp.minimumPressDuration = 0.12;
             [handle addGestureRecognizer:lp];
         } else {
             cell.textLabel.text = entry[MMMenuEntryTitleKey];
