@@ -127,7 +127,7 @@ static id WCZZValue(id obj, NSString *key) {
     return 1;
 }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section { return 28.0; }
-- (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section { return 8.0; }
+- (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section { return section == 0 ? 8.0 : 0.01; }
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
     if (section == 0) return @"红包";
     return @"消息";
