@@ -426,7 +426,7 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     cell.userInteractionEnabled = YES;
     cell.showsReorderControl = NO;
-    for (UIView *v in [cell.contentView.subviews copy]) { if ([v isKindOfClass:[UISwitch class]] || v.tag == 999) [v removeFromSuperview]; }
+    for (UIView *v in [cell.contentView.subviews copy]) { if ([v isKindOfClass:[UISwitch class]] || v.tag == 999 || v.tag == 998) [v removeFromSuperview]; }
     MMApplyCard(cell, tableView, indexPath);
     cell.layoutMargins = UIEdgeInsetsMake(0, 32, 0, 16);
 
@@ -460,13 +460,33 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     if (indexPath.section == MMSectionKept) {
         NSArray<NSDictionary *> *kept = [self keptEntries];
         NSDictionary *entry = kept[indexPath.row];
-        cell.textLabel.text = entry[MMMenuEntryTitleKey];
         cell.imageView.image = nil;
         if (self.enabled && self.sortingEnabled) {
             cell.showsReorderControl = YES;
-            // 编辑模式系统会自动缩进，减小左边距让文字对齐
-            cell.layoutMargins = UIEdgeInsetsMake(0, 16, 0, 16);
+            // 排序模式：不用系统 textLabel（编辑模式下位置不可控），自建 label 精确定位
+            cell.textLabel.text = nil;
+            UILabel *titleLabel = [UILabel new];
+            titleLabel.tag = 998;
+            titleLabel.text = entry[MMMenuEntryTitleKey];
+            titleLabel.textColor = [UIColor labelColor];
+            titleLabel.font = [UIFont systemFontOfSize:17];
+            titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
+            [cell.contentView addSubview:titleLabel];
+            [NSLayoutConstraint activateConstraints:@[
+                [titleLabel.leadingAnchor constraintEqualToAnchor:cell.contentView.leadingAnchor constant:16],
+                [titleLabel.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]
+            ]];
+            // 把系统排序按钮往左挪 16pt，避免贴边（layout 后执行）
+            dispatch_async(dispatch_get_main_queue(), ^{
+                for (UIView *sub in cell.subviews) {
+                    if ([NSStringFromClass([sub class]) containsString:@"Reorder"]) {
+                        sub.transform = CGAffineTransformMakeTranslation(-16, 0);
+                        break;
+                    }
+                }
+            });
         } else {
+            cell.textLabel.text = entry[MMMenuEntryTitleKey];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
             UISwitch *sw = [UISwitch new];
             sw.on = YES;
