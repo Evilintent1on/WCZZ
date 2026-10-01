@@ -305,6 +305,10 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
 @property (nonatomic, strong) NSMutableArray<NSMutableDictionary *> *entries;
 @property (nonatomic, assign) BOOL enabled;
 @property (nonatomic, assign) BOOL sortingEnabled;
+// 自定义拖动排序状态
+@property (nonatomic, strong) UIView *mm_dragSnapshot;
+@property (nonatomic, strong) NSIndexPath *mm_dragFrom;
+@property (nonatomic, strong) NSIndexPath *mm_dragTo;
 @end
 
 @implementation MessageMenuSettingsController
@@ -336,28 +340,108 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
                                                      target:self
                                                      action:@selector(addTapped)];
     [self applyEditingState];
-    // 监听长按开始拖动，去掉系统拖动快照的阴影
-    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(mm_reorderLongPress:)];
-    lp.minimumPressDuration = 0.3;
-    [self.tableView addGestureRecognizer:lp];
 }
 
-// 递归去掉 view 树里所有阴影
-static void MMRemoveShadows(UIView *v) {
-    if (v.layer.shadowOpacity > 0) {
-        v.layer.shadowOpacity = 0;
-        v.layer.shadowRadius = 0;
+
+
+#pragma mark - 自定义拖动排序（无阴影）
+
+- (void)mm_handleDrag:(UILongPressGestureRecognizer *)g {
+    UITableView *tv = self.tableView;
+    CGPoint p = [g locationInView:tv];
+    if (g.state == UIGestureRecognizerStateBegan) {
+        NSIndexPath *ip = [tv indexPathForRowAtPoint:p];
+        if (!ip || ip.section != MMSectionKept) return;
+        UITableViewCell *cell = [tv cellForRowAtIndexPath:ip];
+        if (!cell) return;
+        self.mm_dragFrom = ip;
+        self.mm_dragTo = ip;
+        // 快照：只截卡片内容，无阴影
+        UIView *snap = [cell snapshotViewAfterScreenUpdates:NO];
+        snap.frame = [tv convertRect:cell.frame fromView:tv];
+        // 轻微放大表示拿起，不加阴影
+        snap.transform = CGAffineTransformMakeScale(1.03, 1.03);
+        snap.alpha = 0.96;
+        [tv addSubview:snap];
+        self.mm_dragSnapshot = snap;
+        cell.alpha = 0.0;
+        // 震动反馈
+        if (@available(iOS 10.0, *)) {
+            UIImpactFeedbackGenerator *fb = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+            [fb impactOccurred];
+        }
+    } else if (g.state == UIGestureRecognizerStateChanged) {
+        if (!self.mm_dragSnapshot) return;
+        // 跟手移动（只纵向）
+        CGPoint center = self.mm_dragSnapshot.center;
+        center.y = p.y;
+        self.mm_dragSnapshot.center = center;
+        // 算出目标行
+        NSIndexPath *ip = [tv indexPathForRowAtPoint:p];
+        if (ip && ip.section == MMSectionKept && ![ip isEqual:self.mm_dragTo]) {
+            NSIndexPath *from = self.mm_dragTo;
+            self.mm_dragTo = ip;
+            // 先改数据再调 move，保证动画和数据一致
+            [self mm_moveKeptEntryFrom:from.row to:ip.row];
+            [tv moveRowAtIndexPath:from toIndexPath:ip];
+            self.mm_dragFrom = ip;
+            // 刷新圆角
+            dispatch_async(dispatch_get_main_queue(), ^{
+                for (NSIndexPath *vip in [tv indexPathsForVisibleRows]) {
+                    if (vip.section == MMSectionKept) {
+                        UITableViewCell *c = [tv cellForRowAtIndexPath:vip];
+                        if (c && c != [tv cellForRowAtIndexPath:self.mm_dragTo]) MMApplyCard(c, tv, vip);
+                    }
+                }
+            });
+        }
+        // 边缘自动滚动
+        CGFloat topEdge = tv.contentOffset.y + 80;
+        CGFloat bottomEdge = tv.contentOffset.y + tv.bounds.size.height - 80;
+        if (p.y < topEdge) {
+            [tv setContentOffset:CGPointMake(0, MAX(-tv.contentInset.top, tv.contentOffset.y - 8)) animated:NO];
+        } else if (p.y > bottomEdge) {
+            CGFloat maxY = tv.contentSize.height - tv.bounds.size.height + tv.contentInset.bottom;
+            [tv setContentOffset:CGPointMake(0, MIN(maxY, tv.contentOffset.y + 8)) animated:NO];
+        }
+    } else {
+        // 结束：恢复显示，保存
+        if (self.mm_dragSnapshot) {
+            NSIndexPath *ip = self.mm_dragTo ?: self.mm_dragFrom;
+            UITableViewCell *cell = [tv cellForRowAtIndexPath:ip];
+            [UIView animateWithDuration:0.2 animations:^{
+                self.mm_dragSnapshot.transform = CGAffineTransformIdentity;
+                self.mm_dragSnapshot.alpha = 1.0;
+                if (cell) self.mm_dragSnapshot.frame = [tv convertRect:cell.frame fromView:tv];
+            } completion:^(BOOL finished) {
+                [self.mm_dragSnapshot removeFromSuperview];
+                self.mm_dragSnapshot = nil;
+                if (cell) cell.alpha = 1.0;
+                // 全部恢复后刷新圆角
+                [tv reloadSections:[NSIndexSet indexSetWithIndex:MMSectionKept] withRowAnimation:UITableViewRowAnimationNone];
+            }];
+            [self configurationDidChange];
+            self.mm_dragFrom = nil;
+            self.mm_dragTo = nil;
+        }
     }
-    for (UIView *sub in v.subviews) MMRemoveShadows(sub);
 }
 
-- (void)mm_reorderLongPress:(UILongPressGestureRecognizer *)g {
-    if (g.state != UIGestureRecognizerStateBegan) return;
-    // 拖动快照是系统后加的，连续几次扫整个视图树去掉阴影
-    for (int i = 1; i <= 4; i++) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            for (UIWindow *w in [UIApplication sharedApplication].windows) MMRemoveShadows(w);
-        });
+// 纯数据搬移（不触发 UI）
+- (void)mm_moveKeptEntryFrom:(NSInteger)from to:(NSInteger)to {
+    if (from == to) return;
+    NSArray<NSDictionary *> *kept = [self keptEntries];
+    if (from < 0 || to < 0 || (NSUInteger)from >= kept.count || (NSUInteger)to >= kept.count) return;
+    NSMutableArray<NSDictionary *> *ordered = [kept mutableCopy];
+    NSDictionary *moving = ordered[from];
+    [ordered removeObjectAtIndex:from];
+    [ordered insertObject:moving atIndex:to];
+    NSUInteger next = 0;
+    for (NSUInteger i = 0; i < self.entries.count; i++) {
+        if (![self.entries[i][MMMenuEntryRemoveKey] boolValue] && next < ordered.count) {
+            self.entries[i] = [ordered[next] mutableCopy];
+            next++;
+        }
     }
 }
 
@@ -402,7 +486,8 @@ static void MMRemoveShadows(UIView *v) {
 }
 
 - (void)applyEditingState {
-    [self.tableView setEditing:(self.enabled && self.sortingEnabled) animated:NO];
+    // 自定义拖动排序，不用系统编辑模式
+    [self.tableView setEditing:NO animated:NO];
 }
 
 #pragma mark - Table data source
@@ -449,7 +534,7 @@ static void MMRemoveShadows(UIView *v) {
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     cell.userInteractionEnabled = YES;
     cell.showsReorderControl = NO;
-    for (UIView *v in [cell.contentView.subviews copy]) { if ([v isKindOfClass:[UISwitch class]] || v.tag == 999 || v.tag == 998) [v removeFromSuperview]; }
+    for (UIView *v in [cell.contentView.subviews copy]) { if ([v isKindOfClass:[UISwitch class]] || v.tag == 999 || v.tag == 998 || v.tag == 997) [v removeFromSuperview]; }
     MMApplyCard(cell, tableView, indexPath);
     cell.layoutMargins = UIEdgeInsetsMake(0, 32, 0, 16);
 
@@ -485,8 +570,7 @@ static void MMRemoveShadows(UIView *v) {
         NSDictionary *entry = kept[indexPath.row];
         cell.imageView.image = nil;
         if (self.enabled && self.sortingEnabled) {
-            cell.showsReorderControl = YES;
-            // 排序模式：不用系统 textLabel（编辑模式下位置不可控），自建 label 精确定位
+            // 排序模式：自建 label + 自定义拖动手柄，不用系统 reorder（系统拖动阴影去不掉）
             cell.textLabel.text = nil;
             UILabel *titleLabel = [UILabel new];
             titleLabel.tag = 998;
@@ -499,21 +583,23 @@ static void MMRemoveShadows(UIView *v) {
                 [titleLabel.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:32],
                 [titleLabel.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]
             ]];
-            // 排序行不需要选中高光，避免按住时阴影超出卡片圆角
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
-            // 关掉拖动抬起时的系统阴影
-            cell.layer.shadowOpacity = 0;
-            cell.layer.shadowRadius = 0;
-            cell.contentView.layer.shadowOpacity = 0;
-            // 把系统排序按钮往左挪 16pt，避免贴边（layout 后执行）
-            dispatch_async(dispatch_get_main_queue(), ^{
-                for (UIView *sub in cell.subviews) {
-                    if ([NSStringFromClass([sub class]) containsString:@"Reorder"]) {
-                        sub.transform = CGAffineTransformMakeTranslation(-16, 0);
-                        break;
-                    }
-                }
-            });
+            // 自定义拖动手柄
+            UILabel *handle = [UILabel new];
+            handle.tag = 997;
+            handle.text = @"\u2261";
+            handle.textColor = [UIColor tertiaryLabelColor];
+            handle.font = [UIFont systemFontOfSize:22];
+            handle.translatesAutoresizingMaskIntoConstraints = NO;
+            handle.userInteractionEnabled = YES;
+            [cell.contentView addSubview:handle];
+            [NSLayoutConstraint activateConstraints:@[
+                [handle.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor constant:-32],
+                [handle.centerYAnchor constraintEqualToAnchor:cell.contentView.centerYAnchor]
+            ]];
+            UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(mm_handleDrag:)];
+            lp.minimumPressDuration = 0.25;
+            [handle addGestureRecognizer:lp];
         } else {
             cell.textLabel.text = entry[MMMenuEntryTitleKey];
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
