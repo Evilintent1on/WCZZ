@@ -6,6 +6,7 @@
 #import "WCZZSessionGroupManager.h"
 #import "WCZZGroupSettingsViewController.h"
 #import <objc/runtime.h>
+#import <objc/message.h>
 
 // 分组 header 右上角 "+" 按钮点击：弹出菜单（一键已读 / 分组设置）
 static void WCZZShowGroupHeaderMenu(UIViewController *hostVC) {
@@ -127,8 +128,6 @@ static void WCZZApplyCard(UITableViewCell *cell, UITableView *tv, NSIndexPath *i
     cell.selectedBackgroundView = selBg;
     cell.backgroundColor = [UIColor clearColor];
 }
-#import <objc/message.h>
-#import <objc/runtime.h>
 #import <limits.h>
 
 // WCZZ 0.1-1
