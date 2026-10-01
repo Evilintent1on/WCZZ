@@ -150,3 +150,16 @@
 
 @interface MinimizeViewController : UIViewController
 @end
+
+// 会话管理器（群聊分组用）
+@interface MMSessionMgr : NSObject
+- (id)GetSessionInfoList;
+- (id)GetSessionByUserName:(NSString *)userName;
+- (void)AddOrModifySession:(id)session withNotifyFlag:(unsigned int)flag immediateRefresh:(BOOL)refresh;
+@end
+
+// 主聊天列表 VC（群聊分组数据源 hook）
+@interface NewMainFrameViewController : UIViewController
+- (id)logicGetSessionAtIndexPath:(id)indexPath;
+- (NSInteger)logicGetCountForSection:(NSInteger)section;
+@end
