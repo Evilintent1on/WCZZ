@@ -336,6 +336,32 @@ trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
                                                      target:self
                                                      action:@selector(addTapped)];
     [self applyEditingState];
+    // 监听长按开始拖动，去掉系统拖动快照的阴影
+    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(mm_reorderLongPress:)];
+    lp.minimumPressDuration = 0.3;
+    [self.tableView addGestureRecognizer:lp];
+}
+
+- (void)mm_reorderLongPress:(UILongPressGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateBegan) return;
+    // 拖动快照是系统后加到 window 上的，延迟一拍找到并去掉阴影
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            for (UIView *sub in w.subviews) {
+                if (sub.layer.shadowOpacity > 0) {
+                    sub.layer.shadowOpacity = 0;
+                    sub.layer.shadowRadius = 0;
+                }
+                // 快照可能包一层，再往下一级找
+                for (UIView *s2 in sub.subviews) {
+                    if (s2.layer.shadowOpacity > 0) {
+                        s2.layer.shadowOpacity = 0;
+                        s2.layer.shadowRadius = 0;
+                    }
+                }
+            }
+        }
+    });
 }
 
 - (void)viewWillAppear:(BOOL)animated {
