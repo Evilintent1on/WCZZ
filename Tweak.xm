@@ -649,7 +649,11 @@ static void WCZZRegisterPlugin(void) {
     if (!c || ![c respondsToSelector:shared]) return;
     id mgr = ((id (*)(id, SEL))objc_msgSend)(c, shared);
     if (!mgr || ![mgr respondsToSelector:reg]) return;
+    #ifdef PACKAGE_VERSION
+    ((void (*)(id, SEL, id, id, id))objc_msgSend)(mgr, reg, @"WCZZ", PACKAGE_VERSION, @"WCZZSettingsViewController");
+#else
     ((void (*)(id, SEL, id, id, id))objc_msgSend)(mgr, reg, @"WCZZ", @"0.1-1", @"WCZZSettingsViewController");
+#endif
     WCZZRegistered = YES;
     WCZZLog(@"plugin registration OK");
 }
