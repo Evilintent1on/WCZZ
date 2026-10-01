@@ -5,6 +5,7 @@
 #import "MessageMenuSettingsController.h"
 #import "WCZZSessionGroupManager.h"
 #import "WCZZGroupSettingsViewController.h"
+#import <objc/runtime.h>
 
 // 分组 header 右上角 "+" 按钮点击：弹出菜单（一键已读 / 分组设置）
 static void WCZZShowGroupHeaderMenu(UIViewController *hostVC) {
