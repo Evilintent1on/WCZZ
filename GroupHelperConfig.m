@@ -1,5 +1,6 @@
 //
 //  GroupHelperConfig.m
+//  群助手（MiYou 式）：合成入口会话 + 分区名单。
 //
 
 #import "WeChatHeaders.h"
@@ -10,12 +11,12 @@
 #import <objc/message.h>
 
 NSString * const MMGroupEnabledKey = @"wczz.group.enabled";
-NSString * const MMGroupListKey    = @"wczz.group.list";
-NSString * const MMGroupFoldedKey  = @"wczz.group.foldedByUs";
+NSString * const MMGroupCommonKey  = @"wczz.group.common";
+NSString * const MMGroupManualKey  = @"wczz.group.manual";
+NSString * const MMGroupTitleKey   = @"wczz.group.title";
+NSString * const MMGroupDebugKey   = @"wczz.group.debug";
 
-/// 落地过程中会被微信回调（rebuildAndUpdateSessionInfo → GetSessionInfoList），
-/// 用它挡住递归。
-static BOOL MMGroupApplying = NO;
+static NSString * const kMMGroupHelperUserName = @"wczz_group_helper";
 
 #pragma mark - helpers
 
@@ -28,6 +29,11 @@ static id MMGroupValue(id object, NSString *key) {
     }
 }
 
+static NSString *MMGroupUserNameOf(id session) {
+    NSString *userName = MMGroupValue(session, @"m_nsUserName");
+    return [userName isKindOfClass:[NSString class]] ? userName : nil;
+}
+
 static MMNewSessionMgr *MMGroupSessionMgr(void) {
     Class centerClass = objc_getClass("MMServiceCenter");
     Class mgrClass = objc_getClass("MMNewSessionMgr");
@@ -37,8 +43,7 @@ static MMNewSessionMgr *MMGroupSessionMgr(void) {
     if (![centerClass respondsToSelector:defaultCenterSel]) return nil;
     id center = ((id (*)(id, SEL))objc_msgSend)(centerClass, defaultCenterSel);
     if (!center || ![center respondsToSelector:getServiceSel]) return nil;
-    id mgr = ((id (*)(id, SEL, id))objc_msgSend)(center, getServiceSel, mgrClass);
-    return [mgr isKindOfClass:[MMNewSessionMgr class]] ? mgr : (MMNewSessionMgr *)mgr;
+    return (MMNewSessionMgr *)((id (*)(id, SEL, id))objc_msgSend)(center, getServiceSel, mgrClass);
 }
 
 static NSMutableArray<NSString *> *MMGroupStoredList(NSString *key) {
@@ -58,139 +63,258 @@ static void MMGroupStoreList(NSArray<NSString *> *list, NSString *key) {
     [[NSUserDefaults standardUserDefaults] setObject:(list ?: @[]) forKey:key];
 }
 
+static void MMGroupStoreUserName(NSString *userName, BOOL present, NSString *key) {
+    NSMutableArray<NSString *> *list = MMGroupStoredList(key);
+    BOOL contains = [list containsObject:userName];
+    if (present && !contains) {
+        [list addObject:userName];
+        MMGroupStoreList(list, key);
+    } else if (!present && contains) {
+        [list removeObject:userName];
+        MMGroupStoreList(list, key);
+    }
+}
+
+#pragma mark - logging
+
+BOOL MMGroupDebugEnabled(void) {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:MMGroupDebugKey];
+}
+
+void MMGroupSetDebugEnabled(BOOL enabled) {
+    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:MMGroupDebugKey];
+}
+
+void MMGroupLog(NSString *format, ...) {
+    if (!MMGroupDebugEnabled()) return;
+    va_list args;
+    va_start(args, format);
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    NSLog(@"[WCZZ/群助手] %@", message);
+}
+
 #pragma mark - switches
 
 BOOL MMGroupIsEnabled(void) {
     id value = [[NSUserDefaults standardUserDefaults] objectForKey:MMGroupEnabledKey];
-    return value ? [value boolValue] : NO;   // 默认关闭
+    return value ? [value boolValue] : NO;
 }
 
 void MMGroupSetEnabled(BOOL enabled) {
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:MMGroupEnabledKey];
 }
 
-#pragma mark - membership (pure state)
+#pragma mark - entry session
 
-NSArray<NSString *> *MMGroupUserNameList(void) {
-    return [MMGroupStoredList(MMGroupListKey) copy];
+NSString *MMGroupHelperUserName(void) {
+    return kMMGroupHelperUserName;
 }
 
-void MMGroupSetUserNameList(NSArray<NSString *> *list) {
+NSString *MMGroupHelperTitle(void) {
+    NSString *title = [[NSUserDefaults standardUserDefaults] stringForKey:MMGroupTitleKey];
+    return title.length ? title : @"群助手";
+}
+
+void MMGroupSetHelperTitle(NSString *title) {
+    if (![title isKindOfClass:[NSString class]] || !title.length) return;
+    [[NSUserDefaults standardUserDefaults] setObject:title forKey:MMGroupTitleKey];
+}
+
+BOOL MMGroupIsHelperSession(NSString *userName) {
+    return [userName isKindOfClass:[NSString class]] && [userName isEqualToString:kMMGroupHelperUserName];
+}
+
+BOOL MMGroupIsGroupUserName(NSString *userName) {
+    if (![userName isKindOfClass:[NSString class]] || !userName.length) return NO;
+    return [userName hasSuffix:@"@chatroom"];
+}
+
+#pragma mark - 名单
+
+NSArray<NSString *> *MMGroupCommonList(void) {
+    return [MMGroupStoredList(MMGroupCommonKey) copy];
+}
+
+void MMGroupSetCommonList(NSArray<NSString *> *list) {
     NSMutableArray<NSString *> *clean = [NSMutableArray array];
     for (id item in list) {
         if ([item isKindOfClass:[NSString class]] && [item length] && ![clean containsObject:item]) {
             [clean addObject:item];
         }
     }
-    MMGroupStoreList(clean, MMGroupListKey);
+    MMGroupStoreList(clean, MMGroupCommonKey);
 }
 
-BOOL MMGroupContainsUserName(NSString *userName) {
+BOOL MMGroupIsCommon(NSString *userName) {
     if (![userName isKindOfClass:[NSString class]] || !userName.length) return NO;
-    return [MMGroupStoredList(MMGroupListKey) containsObject:userName];
+    return [MMGroupStoredList(MMGroupCommonKey) containsObject:userName];
 }
 
-void MMGroupAddUserName(NSString *userName) {
+void MMGroupSetCommon(NSString *userName, BOOL common) {
     if (![userName isKindOfClass:[NSString class]] || !userName.length) return;
-    NSMutableArray<NSString *> *list = MMGroupStoredList(MMGroupListKey);
-    if ([list containsObject:userName]) return;
-    [list addObject:userName];
-    MMGroupStoreList(list, MMGroupListKey);
+    MMGroupStoreUserName(userName, common, MMGroupCommonKey);
 }
 
-void MMGroupRemoveUserName(NSString *userName) {
+void MMGroupClearCommonList(void) {
+    MMGroupStoreList(@[], MMGroupCommonKey);
+}
+
+NSArray<NSString *> *MMGroupManualList(void) {
+    return [MMGroupStoredList(MMGroupManualKey) copy];
+}
+
+void MMGroupSetManualList(NSArray<NSString *> *list) {
+    NSMutableArray<NSString *> *clean = [NSMutableArray array];
+    for (id item in list) {
+        if ([item isKindOfClass:[NSString class]] && [item length] && ![clean containsObject:item]) {
+            [clean addObject:item];
+        }
+    }
+    MMGroupStoreList(clean, MMGroupManualKey);
+}
+
+BOOL MMGroupIsManual(NSString *userName) {
+    if (![userName isKindOfClass:[NSString class]] || !userName.length) return NO;
+    return [MMGroupStoredList(MMGroupManualKey) containsObject:userName];
+}
+
+void MMGroupSetManual(NSString *userName, BOOL manual) {
     if (![userName isKindOfClass:[NSString class]] || !userName.length) return;
-    NSMutableArray<NSString *> *list = MMGroupStoredList(MMGroupListKey);
-    if (![list containsObject:userName]) return;
-    [list removeObject:userName];
-    MMGroupStoreList(list, MMGroupListKey);
+    MMGroupStoreUserName(userName, manual, MMGroupManualKey);
 }
 
-void MMGroupClearUserNames(void) {
-    MMGroupStoreList(@[], MMGroupListKey);
+#pragma mark - 会话与分组
+
+/// 插件自己取原始会话列表时置位，避免被会话列表 hook 里的过滤/插入影响
+/// （否则选择页看不到已经进分组的会话，没法取消勾选）。
+static BOOL MMGroupBypassListFilter = NO;
+
+BOOL MMGroupIsBypassingListFilter(void) {
+    return MMGroupBypassListFilter;
 }
 
-#pragma mark - session pipeline
+void MMGroupSetBypassingListFilter(BOOL bypassing) {
+    MMGroupBypassListFilter = bypassing;
+}
 
 NSArray *MMGroupAllSessions(void) {
     MMNewSessionMgr *mgr = MMGroupSessionMgr();
     SEL sel = NSSelectorFromString(@"GetSessionInfoList");
     if (!mgr || ![mgr respondsToSelector:sel]) return @[];
+    MMGroupBypassListFilter = YES;
     id list = ((id (*)(id, SEL))objc_msgSend)(mgr, sel);
+    MMGroupBypassListFilter = NO;
     return [list isKindOfClass:[NSArray class]] ? list : @[];
 }
 
-void MMGroupSyncFromNativeFold(NSArray *sessions) {
-    if (MMGroupApplying) return;
-    if (![sessions isKindOfClass:[NSArray class]] || sessions.count == 0) return;
-    MMNewSessionMgr *mgr = MMGroupSessionMgr();
-    SEL shouldFoldSel = NSSelectorFromString(@"shouldFoldSession:");
-    if (!mgr || ![mgr respondsToSelector:shouldFoldSel]) return;
-
-    NSMutableArray<NSString *> *list = MMGroupStoredList(MMGroupListKey);
-    BOOL changed = NO;
-    for (id session in sessions) {
-        NSString *userName = MMGroupValue(session, @"m_nsUserName");
-        if (![userName isKindOfClass:[NSString class]] || !userName.length) continue;
-        if ([list containsObject:userName]) continue;
-        BOOL folded = ((BOOL (*)(id, SEL, id))objc_msgSend)(mgr, shouldFoldSel, session);
-        if (folded) {
-            [list addObject:userName];
-            changed = YES;
+NSArray *MMGroupAllGroupSessions(void) {
+    NSMutableArray *groups = [NSMutableArray array];
+    for (id session in MMGroupAllSessions()) {
+        if (MMGroupIsGroupUserName(MMGroupUserNameOf(session))) {
+            [groups addObject:session];
         }
     }
-    if (changed) MMGroupStoreList(list, MMGroupListKey);
+    return [groups copy];
 }
 
-void MMGroupApplyFold(void) {
-    if (MMGroupApplying) return;
+/// 分组内容 =（所有群聊 − 常用群）∪ 手动加入；入口会话本身永远排除。
+NSArray *MMGroupGroupedSessionsFromList(NSArray *allSessions) {
+    NSMutableArray *out = [NSMutableArray array];
+    if (![allSessions isKindOfClass:[NSArray class]] || allSessions.count == 0) return out;
+
+    NSSet<NSString *> *common = [NSSet setWithArray:MMGroupStoredList(MMGroupCommonKey)];
+    NSSet<NSString *> *manual = [NSSet setWithArray:MMGroupStoredList(MMGroupManualKey)];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+
+    for (id session in allSessions) {
+        NSString *userName = MMGroupUserNameOf(session);
+        if (!userName.length || MMGroupIsHelperSession(userName)) continue;
+        if ([seen containsObject:userName]) continue;
+        BOOL grouped = [manual containsObject:userName];
+        if (!grouped && MMGroupIsGroupUserName(userName) && ![common containsObject:userName]) {
+            grouped = YES;
+        }
+        if (grouped) {
+            [out addObject:session];
+            [seen addObject:userName];
+        }
+    }
+    return [out copy];
+}
+
+NSArray *MMGroupGroupedSessions(void) {
+    return MMGroupGroupedSessionsFromList(MMGroupAllSessions());
+}
+
+id MMGroupMakeHelperSessionFromGrouped(NSArray *grouped) {
+    if (![grouped isKindOfClass:[NSArray class]] || grouped.count == 0) return nil;
+
+    unsigned int unread = 0;
+    unsigned int latest = 0;
+    for (id session in grouped) {
+        unread += (unsigned int)[MMGroupValue(session, @"m_uUnReadCount") unsignedIntValue];
+        unsigned int sortTime = (unsigned int)[MMGroupValue(session, @"sortTime") unsignedIntValue];
+        if (sortTime > latest) latest = sortTime;
+    }
+
+    Class infoClass = objc_getClass("MMSessionInfo");
+    if (!infoClass) return nil;
+
+    id info = nil;
     MMNewSessionMgr *mgr = MMGroupSessionMgr();
-    if (!mgr) return;
-
-    SEL foldSel = NSSelectorFromString(@"foldSessionByNames:");
-    SEL unfoldSel = NSSelectorFromString(@"unfoldSessionByName:");
-    if (![mgr respondsToSelector:foldSel] || ![mgr respondsToSelector:unfoldSel]) return;
-
-    MMGroupApplying = YES;
-
-    BOOL enabled = MMGroupIsEnabled();
-    NSMutableArray<NSString *> *wanted = enabled ? MMGroupStoredList(MMGroupListKey) : [NSMutableArray array];
-    NSMutableArray<NSString *> *foldedByUs = MMGroupStoredList(MMGroupFoldedKey);
-
-    // 1) 名单里新增的 → 折起来
-    NSMutableArray<NSString *> *toFold = [NSMutableArray array];
-    for (NSString *userName in wanted) {
-        if (![foldedByUs containsObject:userName]) [toFold addObject:userName];
+    SEL genSel = NSSelectorFromString(@"genSessionInfoByUserName:");
+    if (mgr && [mgr respondsToSelector:genSel]) {
+        info = ((id (*)(id, SEL, id))objc_msgSend)(mgr, genSel, MMGroupHelperUserName());
     }
-    if (toFold.count) {
-        ((void (*)(id, SEL, id))objc_msgSend)(mgr, foldSel, toFold);
-        [foldedByUs addObjectsFromArray:toFold];
+    if (![info isKindOfClass:infoClass]) {
+        info = [[infoClass alloc] init];
     }
+    if (!info) return nil;
 
-    // 2) 已从名单移除的 → 只展开我们自己折过的
-    for (NSString *userName in [foldedByUs copy]) {
-        if ([wanted containsObject:userName]) continue;
-        ((void (*)(id, SEL, id))objc_msgSend)(mgr, unfoldSel, userName);
-        [foldedByUs removeObject:userName];
+    unsigned int now = (unsigned int)[[NSDate date] timeIntervalSince1970];
+    @try {
+        [info setValue:MMGroupHelperUserName() forKey:@"m_nsUserName"];
+        [info setValue:MMGroupHelperTitle() forKey:@"m_nsNickName"];
+        [info setValue:@(unread) forKey:@"m_uUnReadCount"];
+        [info setValue:@(NO) forKey:@"m_bShowUnReadAsRedDot"];
+        [info setValue:@(MAX(latest, now)) forKey:@"sortTime"];
+        [info setValue:@(now) forKey:@"m_uTopTime"];
+        [info setValue:@(0) forKey:@"m_uUnTopTime"];
+    } @catch (NSException *exception) {
+        MMGroupLog(@"合成入口会话失败: %@", exception);
     }
-
-    MMGroupStoreList(foldedByUs, MMGroupFoldedKey);
-
-    SEL rebuildSel = NSSelectorFromString(@"rebuildAndUpdateSessionInfo");
-    if ([mgr respondsToSelector:rebuildSel]) {
-        ((void (*)(id, SEL))objc_msgSend)(mgr, rebuildSel);
-    }
-
-    MMGroupApplying = NO;
+    MMGroupLog(@"入口会话: %lu 个会话, 未读 %u", (unsigned long)grouped.count, unread);
+    return info;
 }
 
-#pragma mark - display
+id MMGroupMakeHelperSession(void) {
+    return MMGroupMakeHelperSessionFromGrouped(MMGroupGroupedSessions());
+}
+
+#pragma mark - 显示 / 诊断
 
 id MMGroupValueSafe(id object, NSString *key) {
     return MMGroupValue(object, key);
 }
 
+NSString *MMGroupRuntimeStatus(void) {
+    if (!objc_getClass("MMNewSessionMgr")) return @"不可用：缺少 MMNewSessionMgr";
+    if (!objc_getClass("MMSessionInfo")) return @"不可用：缺少 MMSessionInfo";
+    Class helper = objc_getClass("NewMainFrameViewController");
+    if (!helper) return @"部分可用：会话列表类缺失";
+    NSArray<NSString *> *needed = @[@"GetSessionInfoList", @"logicGetSessionAtIndexPath:", @"onLogicOpenSession:"];
+    for (NSString *selectorName in needed) {
+        SEL sel = NSSelectorFromString(selectorName);
+        if (![helper instancesRespondToSelector:sel] && ![helper respondsToSelector:sel]) {
+            return [NSString stringWithFormat:@"部分可用：缺少 %@", selectorName];
+        }
+    }
+    return @"可用";
+}
+
 NSString *MMGroupDisplayName(NSString *userName, NSString *fallback) {
+    if (MMGroupIsHelperSession(userName)) return MMGroupHelperTitle();
     if (![userName isKindOfClass:[NSString class]] || !userName.length) {
         return [fallback isKindOfClass:[NSString class]] ? fallback : @"";
     }

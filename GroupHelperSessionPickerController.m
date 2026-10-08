@@ -1,9 +1,6 @@
 //
 //  GroupHelperSessionPickerController.m
 //
-//  数据来源：-[MMNewSessionMgr GetSessionInfoList]（8.0.75 已验证存在）。
-//  勾选状态来自 wczz.group.list；提交时整体覆盖名单并落地折叠。
-//
 
 #import "WeChatHeaders.h"
 #import "GroupHelperCompat.h"
@@ -11,21 +8,22 @@
 #import "GroupHelperSessionPickerController.h"
 
 @interface GroupHelperSessionPickerController () <UISearchResultsUpdating>
+@property (nonatomic, assign) GroupHelperPickerMode mode;
 @property (nonatomic, copy) void (^completion)(NSUInteger count);
 @property (nonatomic, strong) NSArray *sessions;
 @property (nonatomic, strong) NSArray *filtered;
 @property (nonatomic, strong) NSMutableOrderedSet<NSString *> *selected;
 @property (nonatomic, strong) UISearchController *searchController;
-@property (nonatomic, copy) NSString *keyword;
 @end
 
 @implementation GroupHelperSessionPickerController
 
-- (instancetype)initWithCompletion:(void (^)(NSUInteger))completion {
+- (instancetype)initWithMode:(GroupHelperPickerMode)mode completion:(void (^)(NSUInteger))completion {
     if ((self = [super initWithStyle:UITableViewStylePlain])) {
+        _mode = mode;
         _completion = [completion copy];
         _selected = [NSMutableOrderedSet orderedSet];
-        self.title = @"群助手名单";
+        self.title = (mode == GroupHelperPickerModeCommon) ? @"常用群（不进分组）" : @"加入分组";
     }
     return self;
 }
@@ -40,11 +38,11 @@
     self.navigationItem.leftBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
                                                       target:self
-                                                      action:@selector(wczzGroupCancel)];
+                                                      action:@selector(onCancel)];
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
                                                       target:self
-                                                      action:@selector(wczzGroupDone)];
+                                                      action:@selector(onDone)];
 
     self.searchController = [[UISearchController alloc] initWithSearchResultsController:nil];
     self.searchController.searchResultsUpdater = self;
@@ -57,32 +55,35 @@
     }
     self.definesPresentationContext = YES;
 
-    [self wczzGroupReload];
+    [self reloadData];
 }
 
-- (void)wczzGroupReload {
-    self.sessions = MMGroupAllSessions();
-    self.filtered = self.sessions;
+- (NSArray<NSString *> *)memberList {
+    return (self.mode == GroupHelperPickerModeCommon) ? MMGroupCommonList() : MMGroupManualList();
+}
 
+- (void)reloadData {
+    // 常用群只能选群聊；手动加入可以选任意会话
+    self.sessions = (self.mode == GroupHelperPickerModeCommon) ? MMGroupAllGroupSessions() : MMGroupAllSessions();
+    self.filtered = self.sessions;
     [self.selected removeAllObjects];
-    for (NSString *userName in MMGroupUserNameList()) {
+    for (NSString *userName in [self memberList]) {
         [self.selected addObject:userName];
     }
     [self.tableView reloadData];
-    [self wczzGroupUpdatePrompt];
+    [self updatePrompt];
 }
 
-- (void)wczzGroupUpdatePrompt {
-    self.navigationItem.prompt = [NSString stringWithFormat:@"已选 %lu / 共 %lu 个会话",
-                                  (unsigned long)self.selected.count,
-                                  (unsigned long)self.sessions.count];
+- (void)updatePrompt {
+    NSString *what = (self.mode == GroupHelperPickerModeCommon) ? @"常用" : @"已加入";
+    self.navigationItem.prompt = [NSString stringWithFormat:@"%@ %lu / 共 %lu 个会话",
+                                  what, (unsigned long)self.selected.count, (unsigned long)self.sessions.count];
 }
 
 #pragma mark - search
 
 - (void)updateSearchResultsForSearchController:(UISearchController *)searchController {
     NSString *keyword = searchController.searchBar.text.lowercaseString;
-    self.keyword = keyword;
     if (!keyword.length) {
         self.filtered = self.sessions;
     } else {
@@ -112,20 +113,16 @@
     if (!cell) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:identifier];
         cell.textLabel.font = [UIFont systemFontOfSize:16.0];
-        cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+        if (@available(iOS 13.0, *)) {
+            cell.detailTextLabel.textColor = [UIColor secondaryLabelColor];
+        }
     }
     id session = self.filtered[(NSUInteger)indexPath.row];
     NSString *userName = MMGroupValueSafe(session, @"m_nsUserName");
     NSString *display = MMGroupDisplayName(userName, MMGroupValueSafe(session, @"m_nsNickName"));
-    unsigned int unread = (unsigned int)[MMGroupValueSafe(session, @"m_uUnReadCount") unsignedIntValue];
 
     cell.textLabel.text = display;
-    if ([display isEqualToString:userName]) {
-        cell.detailTextLabel.text = unread ? [NSString stringWithFormat:@"%u 条未读", unread] : nil;
-    } else {
-        cell.detailTextLabel.text = unread ? [NSString stringWithFormat:@"%@ · %u 条未读", userName, unread]
-                                           : userName;
-    }
+    cell.detailTextLabel.text = [display isEqualToString:userName] ? nil : userName;
     cell.accessoryType = [self.selected containsObject:userName] ? UITableViewCellAccessoryCheckmark
                                                                 : UITableViewCellAccessoryNone;
     return cell;
@@ -142,18 +139,21 @@
         [self.selected addObject:userName];
     }
     [tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
-    [self wczzGroupUpdatePrompt];
+    [self updatePrompt];
 }
 
 #pragma mark - actions
 
-- (void)wczzGroupCancel {
+- (void)onCancel {
     [self dismissViewControllerAnimated:YES completion:nil];
 }
 
-- (void)wczzGroupDone {
-    MMGroupSetUserNameList(self.selected.array);
-    MMGroupApplyFold();
+- (void)onDone {
+    if (self.mode == GroupHelperPickerModeCommon) {
+        MMGroupSetCommonList(self.selected.array);
+    } else {
+        MMGroupSetManualList(self.selected.array);
+    }
     if (self.completion) {
         self.completion(self.selected.count);
     }

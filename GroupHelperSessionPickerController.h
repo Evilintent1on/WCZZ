@@ -1,13 +1,20 @@
 //
 //  GroupHelperSessionPickerController.h
-//  群助手名单选择页：勾选式会话多选。
+//  选择页（两种用途）：
+//    常用群   —— 只列群聊，勾选 = 不进分组（群聊信息页开关的批量版）
+//    手动加入 —— 列全部会话，勾选 = 手动加进分组（分组页右上角「＋」）
 //
 
 #import <UIKit/UIKit.h>
 
+typedef NS_ENUM(NSInteger, GroupHelperPickerMode) {
+    GroupHelperPickerModeCommon = 0,   // 常用群（不折叠）
+    GroupHelperPickerModeManual        // 手动加入分组
+};
+
 @interface GroupHelperSessionPickerController : UITableViewController
 
-/// done 回调里传入最新的名单数量，用来刷新设置页。
-- (instancetype)initWithCompletion:(void (^)(NSUInteger count))completion;
+- (instancetype)initWithMode:(GroupHelperPickerMode)mode
+                  completion:(void (^)(NSUInteger count))completion;
 
 @end

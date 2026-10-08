@@ -10,36 +10,35 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
-// 会话模型：群助手要读 username / 昵称 / 未读数。
+// 会话模型：群助手要读 username / 昵称 / 未读数，并合成一个「群助手」入口会话
+// （合成走 KVC，字段见 GroupHelperConfig.m）。
 @interface MMSessionInfo : NSObject
 @property (nonatomic, copy) NSString *m_nsUserName;
 @property (nonatomic, copy) NSString *m_nsNickName;
 @property (nonatomic, assign) unsigned int m_uUnReadCount;
-@property (nonatomic, assign) BOOL m_isFolding;
 @end
 
-// 会话管理：8.0.75/8.0.79 原生折叠 API 都在这里。
-// 每个调用点都会先 respondsToSelector:，所以老版本微信不会崩。
+// 会话管理：会话列表、按用户名取/造会话。
+// 每个调用点都会先 respondsToSelector:，老版本微信不会崩。
 @interface MMNewSessionMgr : NSObject
 - (id)GetSessionInfoList;
-- (BOOL)shouldFoldSession:(id)session;
-- (void)foldSessionByNames:(NSArray *)names;
-- (void)unfoldSessionByName:(NSString *)name;
-- (void)unfoldAllSessions;
+- (id)GetSessionByUserName:(NSString *)userName;
+- (id)genSessionInfoByUserName:(NSString *)userName;   // 合成入口会话用
 - (void)rebuildAndUpdateSessionInfo;
 @end
 
-// 会话 cell 的左滑菜单：菜单项数组由父类设置。
-@interface MMBaseMultiMenuTableViewCell : UITableViewCell
-- (void)setMenuItemsWithNoDeleteBtn:(NSArray *)items;
-- (void)setMenuItemsWithDefaultDeleteBtn:(NSArray *)items;
-@end
-
-@interface NewMainFrameCell : MMBaseMultiMenuTableViewCell
-- (void)updateCellContent:(id)content withContact:(id)contact;
+// 群聊信息页：m_chatRoomContact 是当前群，m_tableViewInfo 能取到 table view
+// （MMTableViewInfo -getTableView 已在 WeChatHeaders.h 里声明）。
+@interface ChatRoomInfoViewController : UIViewController
+- (void)viewDidLoad;
+- (void)viewWillAppear:(BOOL)animated;
+- (void)reloadTableData;
 @end
 
 // 运行时新增方法的声明（实现由 Logos 的 %new 提供），避免 clang 报 method not found。
-@interface MMBaseMultiMenuTableViewCell (WCZZGroupHelper)
-- (void)wczzGroupToggle:(id)sender;
+@interface ChatRoomInfoViewController (WCZZGroupHelper)
+- (void)wczzGroupInstallCommonSwitch;
+- (void)wczzGroupCommonChanged:(UISwitch *)sender;
+- (UIView *)wczzGroupMakeCommonHeader:(NSString *)userName;
+- (UITableView *)wczzGroupFindTableView:(UIView *)root;
 @end

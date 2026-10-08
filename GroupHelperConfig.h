@@ -1,48 +1,84 @@
 //
 //  GroupHelperConfig.h
-//  群助手（会话分组）配置 + 落地逻辑。
+//  群助手（MiYou 式）：会话列表里一个「入口会话」+ 插件自己的分组列表页。
 //
-//  设计：和 MessageMenuConfig 一样走 C 函数接口，状态存在 NSUserDefaults。
-//  名单(RoomList) → 微信原生折叠(foldSessionByNames:)；同时反向读取微信自己折叠的
-//  会话（shouldFoldSession:），保证两边不打架。
+//  规则：
+//    * 开关打开后，**所有群聊默认进入分组**（在会话列表里被收起来）；
+//    * 在群聊信息页把某个群设为「常用群」，它就不进分组、留在会话列表；
+//    * 分组页右上角「＋」可以把**任意会话**手动加进分组（MiYou 的 RoomList 行为）；
+//    * 会话列表里那一项是插件合成的会话（username = wczz_group_helper），
+//      未读数 = 分组内所有会话未读之和，点击进入插件自己的列表页。
 //
 
 #import <Foundation/Foundation.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 NS_ASSUME_NONNULL_BEGIN
 
 /// NSUserDefaults keys
 FOUNDATION_EXPORT NSString * const MMGroupEnabledKey;   // wczz.group.enabled
-FOUNDATION_EXPORT NSString * const MMGroupListKey;      // wczz.group.list
-FOUNDATION_EXPORT NSString * const MMGroupFoldedKey;    // wczz.group.foldedByUs
+FOUNDATION_EXPORT NSString * const MMGroupCommonKey;    // wczz.group.common   （常用群 = 不进分组）
+FOUNDATION_EXPORT NSString * const MMGroupManualKey;    // wczz.group.manual   （手动加入分组）
+FOUNDATION_EXPORT NSString * const MMGroupTitleKey;     // wczz.group.title
+FOUNDATION_EXPORT NSString * const MMGroupDebugKey;     // wczz.group.debug
 
-/// 开关
+/// 总开关
 BOOL MMGroupIsEnabled(void);
 void MMGroupSetEnabled(BOOL enabled);
 
-/// 名单（纯状态操作，不会触发落地；落地请显式调用 MMGroupApplyFold）
-NSArray<NSString *> *MMGroupUserNameList(void);
-void MMGroupSetUserNameList(NSArray<NSString *> *list);
-BOOL MMGroupContainsUserName(NSString * _Nullable userName);
-void MMGroupAddUserName(NSString * _Nullable userName);
-void MMGroupRemoveUserName(NSString * _Nullable userName);
-void MMGroupClearUserNames(void);
+/// 调试日志（设置页开关打开后走 NSLog）
+BOOL MMGroupDebugEnabled(void);
+void MMGroupSetDebugEnabled(BOOL enabled);
+void MMGroupLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
 
-/// 会话枚举（供选择页使用）：-[MMNewSessionMgr GetSessionInfoList]
-NSArray *MMGroupAllSessions(void);
+/// 入口会话
+NSString *MMGroupHelperUserName(void);      // 固定值：wczz_group_helper
+NSString *MMGroupHelperTitle(void);         // 默认「群助手」
+void MMGroupSetHelperTitle(NSString * _Nullable title);
+BOOL MMGroupIsHelperSession(NSString * _Nullable userName);
 
-/// 反向同步：把微信自己折叠（shouldFoldSession:）的会话补进名单。
-/// 必须传入调用方已有的会话数组，否则在 GetSessionInfoList 的 hook 里会递归。
-void MMGroupSyncFromNativeFold(NSArray * _Nullable sessions);
+/// 群聊判定
+BOOL MMGroupIsGroupUserName(NSString * _Nullable userName);
 
-/// 落地：diff 之后调用 foldSessionByNames: / unfoldSessionByName:，并刷新会话列表。
-/// 只会展开「我们自己折过」的会话（MMGroupFoldedKey），不会动用户手动折叠的。
-void MMGroupApplyFold(void);
+/// 常用群（不进分组）
+NSArray<NSString *> *MMGroupCommonList(void);
+void MMGroupSetCommonList(NSArray<NSString *> *list);
+BOOL MMGroupIsCommon(NSString * _Nullable userName);
+void MMGroupSetCommon(NSString * _Nullable userName, BOOL common);
+void MMGroupClearCommonList(void);
+
+/// 手动加入分组的会话
+NSArray<NSString *> *MMGroupManualList(void);
+void MMGroupSetManualList(NSArray<NSString *> *list);
+BOOL MMGroupIsManual(NSString * _Nullable userName);
+void MMGroupSetManual(NSString * _Nullable userName, BOOL manual);
+
+/// 会话枚举 / 分组计算
+NSArray *MMGroupAllSessions(void);                       // 原始会话列表（绕过会话列表 hook 的过滤）
+NSArray *MMGroupAllGroupSessions(void);                  // 只含群聊（常用群选择页用）
+NSArray *MMGroupGroupedSessionsFromList(NSArray *allSessions);   // hook 里用这个（不会递归）
+NSArray *MMGroupGroupedSessions(void);                   // UI 用
+
+/// 会话列表 hook 用它判断「这次取列表是插件自己要的原始数据，别过滤」
+BOOL MMGroupIsBypassingListFilter(void);
+void MMGroupSetBypassingListFilter(BOOL bypassing);
+
+/// 合成「群助手」入口会话（未读汇总 + 置顶）
+id _Nullable MMGroupMakeHelperSessionFromGrouped(NSArray *grouped);
+id _Nullable MMGroupMakeHelperSession(void);
 
 /// 显示名：备注 > 昵称 > username
 NSString *MMGroupDisplayName(NSString * _Nullable userName, NSString * _Nullable fallback);
-
-/// 带异常保护的 KVC 取值（选择页展示用）。
 id _Nullable MMGroupValueSafe(id _Nullable object, NSString *key);
 
+/// 运行时自检
+NSString *MMGroupRuntimeStatus(void);
+
 NS_ASSUME_NONNULL_END
+
+#ifdef __cplusplus
+}
+#endif
