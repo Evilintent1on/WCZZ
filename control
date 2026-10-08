@@ -1,8 +1,8 @@
 Package: com.evilintent1on.wczz
 Name: WCZZ
-Version: 0.1-1
+Version: 0.2-1
 Architecture: iphoneos-arm
-Description: WeChat 8.0.75 red packet detail and message menu customizer
+Description: WeChat 8.0.75 red packet detail, message menu customizer and group helper (群助手)
 Maintainer: Evilintent1on
 Author: Evilintent1on
 Section: Tweaks

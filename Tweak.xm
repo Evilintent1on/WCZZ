@@ -3,6 +3,9 @@
 #import "MessageMenuConfig.h"
 #import "MessageMenuBackup.h"
 #import "MessageMenuSettingsController.h"
+#import "GroupHelperConfig.h"
+#import "GroupHelperCompat.h"
+#import "GroupHelperSessionPickerController.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 
@@ -122,15 +125,16 @@ static id WCZZValue(id obj, NSString *key) {
         self.view.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
     }
 }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 2; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
-    return 1;
+    return section == 2 ? 2 : 1;
 }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section { return 28.0; }
 - (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section { return section == 0 ? 8.0 : 0.01; }
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
     if (section == 0) return @"红包";
-    return @"消息";
+    if (section == 1) return @"消息";
+    return @"群助手";
 }
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"wczz.setting"]; if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"wczz.setting"];
@@ -145,13 +149,33 @@ static id WCZZValue(id obj, NSString *key) {
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else if (ip.section == 1) {
         c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryNone;
+    } else if (ip.section == 2 && ip.row == 0) {
+        c.textLabel.text=@"启用群助手"; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        UISwitch *sw=[UISwitch new]; sw.tag=200; sw.on=MMGroupIsEnabled(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
+        sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
+        [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
+    } else if (ip.section == 2) {
+        c.textLabel.text=@"群助手名单";
+        c.detailTextLabel.text=[NSString stringWithFormat:@"%lu 个", (unsigned long)[MMGroupUserNameList() count]];
+        c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     }
     return c;
 }
-- (void)wczzMain:(UISwitch *)sw { if(sw.tag==100) WCZZSetBool(WCZZRedDetailKey,sw.on); }
+- (void)wczzMain:(UISwitch *)sw {
+    if (sw.tag == 100) WCZZSetBool(WCZZRedDetailKey, sw.on);
+    if (sw.tag == 200) { MMGroupSetEnabled(sw.on); MMGroupApplyFold(); }
+}
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
     if (ip.section == 1) [self.navigationController pushViewController:[MessageMenuSettingsController new] animated:YES];
+    if (ip.section == 2 && ip.row == 1) {
+        GroupHelperSessionPickerController *picker =
+            [[GroupHelperSessionPickerController alloc] initWithCompletion:^(NSUInteger count) {
+            (void)count;
+            [tv reloadData];
+        }];
+        [self.navigationController pushViewController:picker animated:YES];
+    }
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
 @end
@@ -634,11 +658,116 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
 %end
 %end
 
+#pragma mark - Group helper hooks (群助手)
+
+static const void *WCZZGroupCellUserNameKey = &WCZZGroupCellUserNameKey;
+
+// 跳过聚合行（会话盒子 / 折叠入口这类合成会话）。真实 username 需要在设备上校准。
+static BOOL WCZZGroupIsAggregateUserName(NSString *userName) {
+    if (![userName isKindOfClass:[NSString class]]) return YES;
+    if (userName.length < 3) return YES;
+    NSString *lower = userName.lowercaseString;
+    return [lower containsString:@"chatbox"];
+}
+
+// 菜单项工厂：优先 MMMenuItem（8.0.75 用 initWithTitle:target:action:），取不到就退回 UIMenuItem。
+static id WCZZGroupCreateMenuItem(NSString *title, SEL action, id target) {
+    Class itemClass = NSClassFromString(@"MMMenuItem");
+    if (itemClass) {
+        SEL modern = @selector(initWithTitle:target:action:);
+        SEL legacy = @selector(initWithTitle:icon:target:action:);
+        @try {
+            if ([itemClass instancesRespondToSelector:modern]) {
+                return ((id (*)(id, SEL, id, id, SEL))objc_msgSend)([itemClass alloc], modern, title, target, action);
+            }
+            if ([itemClass instancesRespondToSelector:legacy]) {
+                return ((id (*)(id, SEL, id, id, id, SEL))objc_msgSend)([itemClass alloc], legacy, title, nil, target, action);
+            }
+        } @catch (NSException *exception) {}
+    }
+    return [[UIMenuItem alloc] initWithTitle:title action:action];
+}
+
+static NSArray *WCZZGroupAugmentedMenuItems(id cell, NSArray *items, NSString *userName) {
+    if (![items isKindOfClass:[NSArray class]]) items = @[];
+    if (!MMGroupIsEnabled() || WCZZGroupIsAggregateUserName(userName)) return items;
+    NSMutableArray *result = [NSMutableArray arrayWithArray:items];
+    BOOL inGroup = MMGroupContainsUserName(userName);
+    [result addObject:WCZZGroupCreateMenuItem(inGroup ? @"移出群助手" : @"加入群助手",
+                                             NSSelectorFromString(@"wczzGroupToggle:"), cell)];
+    return [result copy];
+}
+
+%group WCZZGroupHooks
+
+%hook MMNewSessionMgr
+
+- (id)GetSessionInfoList {
+    id list = %orig;
+    if (MMGroupIsEnabled()) MMGroupSyncFromNativeFold(list);   // 反向同步，内部不会递归
+    return list;
+}
+
+- (void)foldSessionByNames:(NSArray *)names {
+    %orig;
+    if (![names isKindOfClass:[NSArray class]]) return;
+    for (id name in names) {
+        if ([name isKindOfClass:[NSString class]]) MMGroupAddUserName(name);
+    }
+}
+
+- (void)unfoldSessionByName:(NSString *)name {
+    %orig;
+    if ([name isKindOfClass:[NSString class]]) MMGroupRemoveUserName(name);
+}
+
+%end
+
+%hook NewMainFrameCell
+
+- (void)updateCellContent:(id)content withContact:(id)contact {
+    %orig;
+    NSString *userName = WCZZValue(contact, @"m_nsUserName");
+    if (![userName isKindOfClass:[NSString class]] || !userName.length) {
+        userName = WCZZValue(content, @"m_nsUserName");
+    }
+    if ([userName isKindOfClass:[NSString class]] && userName.length) {
+        objc_setAssociatedObject(self, WCZZGroupCellUserNameKey, userName, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    }
+}
+
+%end
+
+%hook MMBaseMultiMenuTableViewCell
+
+- (void)setMenuItemsWithNoDeleteBtn:(NSArray *)items {
+    NSString *userName = objc_getAssociatedObject(self, WCZZGroupCellUserNameKey);
+    %orig(WCZZGroupAugmentedMenuItems(self, items, userName));
+}
+
+%new
+- (void)wczzGroupToggle:(id)sender {
+    (void)sender;
+    NSString *userName = objc_getAssociatedObject(self, WCZZGroupCellUserNameKey);
+    if (![userName isKindOfClass:[NSString class]] || !userName.length) return;
+    if (MMGroupContainsUserName(userName)) {
+        MMGroupRemoveUserName(userName);
+    } else {
+        MMGroupAddUserName(userName);
+    }
+    MMGroupApplyFold();
+}
+
+%end
+
+%end
+
 #pragma mark - Plugin registration / delayed hook installation
 
 static BOOL WCZZRegistered = NO;
 static BOOL WCZZRedHooksStarted = NO;
 static BOOL WCZZMenuHooksStarted = NO;
+static BOOL WCZZGroupHooksStarted = NO;
 static NSInteger WCZZInstallAttempts = 0;
 
 static void WCZZRegisterPlugin(void) {
@@ -675,8 +804,15 @@ static void WCZZInstallHooksWhenReady(void) {
             WCZZMenuHooksStarted = YES;
             WCZZLog(@"menu hooks installed");
         }
+        if (!WCZZGroupHooksStarted &&
+            objc_getClass("MMNewSessionMgr") &&
+            objc_getClass("MMBaseMultiMenuTableViewCell")) {
+            %init(WCZZGroupHooks);
+            WCZZGroupHooksStarted = YES;
+            WCZZLog(@"group hooks installed");
+        }
         WCZZRegisterPlugin();
-        if ((!WCZZRedHooksStarted || !WCZZMenuHooksStarted || !WCZZRegistered) && WCZZInstallAttempts++ < 60) {
+        if ((!WCZZRedHooksStarted || !WCZZMenuHooksStarted || !WCZZGroupHooksStarted || !WCZZRegistered) && WCZZInstallAttempts++ < 60) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
                 WCZZInstallHooksWhenReady();
