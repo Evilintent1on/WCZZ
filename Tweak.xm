@@ -715,7 +715,7 @@ static const void *WCZZGroupCommonSwitchKey = &WCZZGroupCommonSwitchKey;
         }
     }
 
-    NSMutableArray *result = [NSMutableArray arrayWithCapacity:list.count + 1];
+    NSMutableArray *result = [NSMutableArray arrayWithCapacity:[(NSArray *)list count] + 1];
     for (id session in list) {
         NSString *userName = MMGroupValueSafe(session, @"m_nsUserName");
         if ([userName isKindOfClass:[NSString class]] && [hidden containsObject:userName]) continue;
