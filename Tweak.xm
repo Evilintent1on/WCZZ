@@ -1004,6 +1004,8 @@ static void WCZZInstallHooksWhenReady(void) {
             WCZZLog(@"group hooks installed");
         }
         MMGroupInstallSessionListHook();
+        // 微信列表实际读的是主界面的行缓存 → 必须在视图层也做一次映射
+        MMGroupInstallViewHooks();
         WCZZRegisterPlugin();
         if ((!WCZZRedHooksStarted || !WCZZMenuHooksStarted || !WCZZGroupHooksStarted || !WCZZRegistered) && WCZZInstallAttempts++ < 60) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)),
