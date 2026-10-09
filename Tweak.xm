@@ -223,15 +223,26 @@ static id WCZZValue(id obj, NSString *key) {
         [self presentViewController:alert animated:YES completion:nil];
     }
     if (ip.section == 2 && ip.row == 4) {
-        NSString *report = MMGroupDiagnostics();
+        NSString *report = nil;
+        @try { report = MMGroupDiagnostics(); } @catch (NSException *exception) { report = nil; }
+        if (![report isKindOfClass:[NSString class]] || !report.length) {
+            report = @"诊断采集失败（已捕获异常，未影响微信）";
+        }
+        // 保底：同时写到微信沙盒 Documents/wczz_group_diag.txt（弹窗出问题也能取到）
+        @try {
+            NSString *dir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+            NSString *path = [dir stringByAppendingPathComponent:@"wczz_group_diag.txt"];
+            [report writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+            NSLog(@"[WCZZ/群助手] 诊断已写入: %@", path);
+        } @catch (__unused NSException *e) {}
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"群助手诊断"
                                                                        message:report
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"复制" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-            [UIPasteboard generalPasteboard].string = report;
+            @try { [UIPasteboard generalPasteboard].string = report; } @catch (__unused NSException *e) {}
         }]];
         [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
+        @try { [self presentViewController:alert animated:YES completion:nil]; } @catch (__unused NSException *e) {}
     }
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }

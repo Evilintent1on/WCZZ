@@ -389,6 +389,61 @@ typedef id (*MMGroupGetListIMP)(id, SEL);
 static MMGroupGetListIMP MMGroupOrigGetSessionInfoList = NULL;
 static NSString *MMGroupHookedClassName = nil;
 
+#pragma mark - 钩子调用记录（诊断只读这些，绝不在诊断里去调微信接口）
+
+static NSUInteger MMGroupHookCalls = 0;
+static NSUInteger MMGroupHookLastRawCount = 0;
+static NSUInteger MMGroupHookLastGroupedCount = 0;
+static NSString *MMGroupHookLastSample = nil;      // 原始会话样本
+static NSString *MMGroupHookLastGroupedSample = nil;
+static NSString *MMGroupHookLastNote = nil;
+
+static NSString *MMGroupSafeDescribe(id session) {
+    @try {
+        if (!session) return @"(nil)";
+        if (![session respondsToSelector:@selector(class)]) return @"(非对象)";
+        NSMutableString *out = [NSMutableString string];
+        [out appendFormat:@"类=%@ ", NSStringFromClass([session class])];
+        for (NSString *key in @[@"m_nsUserName", @"m_nsNickName", @"m_uUnReadCount", @"sortTime"]) {
+            id value = nil;
+            @try { value = [session valueForKey:key]; } @catch (__unused NSException *e) { value = nil; }
+            [out appendFormat:@"%@=%@ ", key, value ?: @"(nil)"];
+        }
+        Ivar ivar = class_getInstanceVariable([session class], "m_nsUserName");
+        if (ivar && ivar_getTypeEncoding(ivar) && ivar_getTypeEncoding(ivar)[0] == '@') {
+            id iv = nil;
+            @try { iv = object_getIvar(session, ivar); } @catch (__unused NSException *e) { iv = nil; }
+            [out appendFormat:@"| ivar=%@ ", iv ?: @"(nil)"];
+        } else {
+            [out appendString:@"| ivar=(无) "];
+        }
+        [out appendFormat:@"| 解析=%@", MMGroupUserNameOfSession(session) ?: @"(失败)"];
+        return out;
+    } @catch (__unused NSException *exception) {
+        return @"(采样异常)";
+    }
+}
+
+static void MMGroupRecordHookCall(NSArray *raw, NSArray *grouped) {
+    MMGroupHookCalls++;
+    MMGroupHookLastRawCount = raw.count;
+    MMGroupHookLastGroupedCount = grouped.count;
+    NSMutableString *sample = [NSMutableString string];
+    NSUInteger limit = MIN((NSUInteger)3, raw.count);
+    for (NSUInteger i = 0; i < limit; i++) {
+        [sample appendFormat:@"[%lu] %@\n", (unsigned long)i, MMGroupSafeDescribe(raw[i])];
+    }
+    MMGroupHookLastSample = sample.length ? [sample copy] : @"(原始列表为空)";
+
+    NSMutableString *groupedSample = [NSMutableString string];
+    NSUInteger glimit = MIN((NSUInteger)3, grouped.count);
+    for (NSUInteger i = 0; i < glimit; i++) {
+        [groupedSample appendFormat:@"[%lu] %@\n", (unsigned long)i, MMGroupSafeDescribe(grouped[i])];
+    }
+    MMGroupHookLastGroupedSample = groupedSample.length ? [groupedSample copy] : @"(没有会话进分组)";
+    MMGroupHookLastNote = [NSString stringWithFormat:@"%@", [NSDate date]];
+}
+
 NSArray<NSString *> *MMGroupSessionMgrCandidates(void) {
     return @[@"MMNewSessionMgr", @"NewSessionMgr", @"MMSessionMgr", @"SessionMgr",
              @"MMSessionManager", @"NewSessionManager", @"MMSessionMgrLogic"];
@@ -415,6 +470,7 @@ static id MMGroupGetSessionInfoListHook(id self, SEL _cmd) {
     @try {
         NSArray *list = (NSArray *)raw;
         NSArray *grouped = MMGroupGroupedSessionsFromList(list);
+        MMGroupRecordHookCall(list, grouped);
         if (grouped.count > 0) {
             NSMutableSet<NSString *> *hidden = [NSMutableSet set];
             for (id session in grouped) {
@@ -490,6 +546,7 @@ void MMGroupForceReloadSessions(void) {
 
 NSString *MMGroupDiagnostics(void) {
     NSMutableString *out = [NSMutableString string];
+    @try {
     NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
     [out appendString:@"WCZZ 群助手诊断\n"];
     [out appendFormat:@"微信版本: %@ (%@)\n", info[@"CFBundleShortVersionString"] ?: @"?", info[@"CFBundleVersion"] ?: @"?"];
@@ -515,28 +572,32 @@ NSString *MMGroupDiagnostics(void) {
     if (MMGroupSessionListHookInstalled()) [out appendFormat:@" (%@)", MMGroupSessionListHookClassName() ?: @"?"];
     [out appendString:@"\n"];
 
-    // 决定性信息：不管类名怎么变，找出真正实现了 GetSessionInfoList 的类
-    [out appendString:@"\n-- 实现了 GetSessionInfoList 的类（全类扫描）--\n"];
-    SEL listSel = NSSelectorFromString(@"GetSessionInfoList");
-    unsigned int classCount = 0;
-    Class *classList = objc_copyClassList(&classCount);
-    NSMutableArray<NSString *> *owners = [NSMutableArray array];
-    if (classList) {
-        for (unsigned int i = 0; i < classCount; i++) {
-            Class cls = classList[i];
-            if (!cls) continue;
-            if (class_getInstanceMethod(cls, listSel)) {
-                [owners addObject:NSStringFromClass(cls)];
+    // 决定性信息：不管类名怎么变，找出真正实现了 GetSessionInfoList 的类（限 20 条，纯运行时查询）
+    [out appendString:@"\n-- 实现了 GetSessionInfoList 的类（全类扫描，最多列 20 个）--\n"];
+    @try {
+        SEL listSel = NSSelectorFromString(@"GetSessionInfoList");
+        unsigned int classCount = 0;
+        Class *classList = objc_copyClassList(&classCount);
+        NSMutableArray<NSString *> *owners = [NSMutableArray array];
+        if (classList) {
+            for (unsigned int i = 0; i < classCount && owners.count < 20; i++) {
+                Class cls = classList[i];
+                if (!cls) continue;
+                if (class_getInstanceMethod(cls, listSel)) {
+                    [owners addObject:NSStringFromClass(cls)];
+                }
+            }
+            free(classList);
+        }
+        if (owners.count == 0) {
+            [out appendString:@"一个都没有（说明这个方法名在这个版本不存在）\n"];
+        } else {
+            for (NSString *name in [owners sortedArrayUsingSelector:@selector(compare:)]) {
+                [out appendFormat:@"%@\n", name];
             }
         }
-        free(classList);
-    }
-    if (owners.count == 0) {
-        [out appendString:@"一个都没有（说明这个方法名在这个版本不存在）\n"];
-    } else {
-        for (NSString *name in [owners sortedArrayUsingSelector:@selector(compare:)]) {
-            [out appendFormat:@"%@\n", name];
-        }
+    } @catch (NSException *exception) {
+        [out appendFormat:@"扫描异常: %@\n", exception];
     }
 
     [out appendString:@"\n-- 其它关键类 --\n"];
@@ -554,28 +615,25 @@ NSString *MMGroupDiagnostics(void) {
          [mainFrame instancesRespondToSelector:NSSelectorFromString(@"onLogicOpenSession:")] ? @"有" : @"无"];
     }
 
-    [out appendString:@"\n-- 会话数据 --\n"];
-    NSArray *all = MMGroupAllSessions();
-    NSArray *groups = MMGroupAllGroupSessions();
-    NSArray *grouped = MMGroupGroupedSessionsFromList(all);
-    [out appendFormat:@"会话总数: %lu（群聊 %lu）\n", (unsigned long)all.count, (unsigned long)groups.count];
-    [out appendFormat:@"应进分组: %lu\n", (unsigned long)grouped.count];
-    [out appendFormat:@"入口会话可生成: %@\n", MMGroupMakeHelperSessionFromGrouped(grouped) ? @"是" : @"否（分组为空或类缺失）"];
-    unsigned int unread = 0;
-    for (id session in grouped) unread += MMGroupUnreadOfSession(session);
-    [out appendFormat:@"分组未读合计: %u\n", unread];
-
-    // 决定性信息：会话字段到底能不能取到
-    [out appendString:@"\n-- 会话样本（前 3 个）--\n"];
-    if (all.count == 0) {
-        [out appendString:@"（一个会话都没取到 → GetSessionInfoList 拿到的不是会话数组）\n"];
+    [out appendString:@"\n-- 会话数据（来自钩子被调用时的记录，诊断本身不碰微信接口）--\n"];
+    if (MMGroupHookCalls == 0) {
+        [out appendString:@"GetSessionInfoList 一次都没被调用过\n"];
+        [out appendString:@"→ 说明微信的会话列表不走这个方法，需要改成视图层方案\n"];
     } else {
-        NSUInteger limit = MIN((NSUInteger)3, all.count);
-        for (NSUInteger i = 0; i < limit; i++) {
-            [out appendFormat:@"[%lu] %@\n", (unsigned long)i, MMGroupDescribeSession(all[i])];
-        }
+        [out appendFormat:@"GetSessionInfoList 调用次数: %lu\n", (unsigned long)MMGroupHookCalls];
+        [out appendFormat:@"最近一次: 原始 %lu 个会话，算出应进分组 %lu 个\n",
+         (unsigned long)MMGroupHookLastRawCount, (unsigned long)MMGroupHookLastGroupedCount];
+        [out appendFormat:@"最近记录时间: %@\n", MMGroupHookLastNote ?: @"?"];
+        [out appendString:@"原始会话样本:\n"];
+        [out appendString:MMGroupHookLastSample ?: @"(无)\n"];
+        [out appendString:@"\n进分组的会话样本:\n"];
+        [out appendString:MMGroupHookLastGroupedSample ?: @"(无)\n"];
     }
+
     [out appendFormat:@"\n时间: %@", [NSDate date]];
+    } @catch (NSException *exception) {
+        [out appendFormat:@"\n诊断采集异常: %@\n", exception];
+    }
     return [out copy];
 }
 
