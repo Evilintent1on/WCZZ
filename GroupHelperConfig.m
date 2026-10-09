@@ -36,14 +36,21 @@ static NSString *MMGroupUserNameOf(id session) {
 
 static MMNewSessionMgr *MMGroupSessionMgr(void) {
     Class centerClass = objc_getClass("MMServiceCenter");
-    Class mgrClass = objc_getClass("MMNewSessionMgr");
-    if (!centerClass || !mgrClass) return nil;
+    if (!centerClass) return nil;
     SEL defaultCenterSel = NSSelectorFromString(@"defaultCenter");
     SEL getServiceSel = NSSelectorFromString(@"getService:");
     if (![centerClass respondsToSelector:defaultCenterSel]) return nil;
     id center = ((id (*)(id, SEL))objc_msgSend)(centerClass, defaultCenterSel);
     if (!center || ![center respondsToSelector:getServiceSel]) return nil;
-    return (MMNewSessionMgr *)((id (*)(id, SEL, id))objc_msgSend)(center, getServiceSel, mgrClass);
+    // 会话管理器的类名各版本不同，逐个候选试
+    for (NSString *name in @[@"MMNewSessionMgr", @"NewSessionMgr", @"MMSessionMgr", @"SessionMgr",
+                             @"MMSessionManager", @"NewSessionManager", @"MMSessionMgrLogic"]) {
+        Class cls = objc_getClass(name.UTF8String);
+        if (!cls) continue;
+        id service = ((id (*)(id, SEL, id))objc_msgSend)(center, getServiceSel, cls);
+        if (service) return (MMNewSessionMgr *)service;
+    }
+    return nil;
 }
 
 static NSMutableArray<NSString *> *MMGroupStoredList(NSString *key) {
@@ -98,7 +105,8 @@ void MMGroupLog(NSString *format, ...) {
 
 BOOL MMGroupIsEnabled(void) {
     id value = [[NSUserDefaults standardUserDefaults] objectForKey:MMGroupEnabledKey];
-    return value ? [value boolValue] : NO;
+    // 默认开启：MiYou 的群助手就是装完即生效，避免「装了没反应」
+    return value ? [value boolValue] : YES;
 }
 
 void MMGroupSetEnabled(BOOL enabled) {
@@ -292,6 +300,167 @@ id MMGroupMakeHelperSession(void) {
     return MMGroupMakeHelperSessionFromGrouped(MMGroupGroupedSessions());
 }
 
+#pragma mark - 会话列表钩子（候选类名探测 + 运行时安装）
+
+typedef id (*MMGroupGetListIMP)(id, SEL);
+
+static MMGroupGetListIMP MMGroupOrigGetSessionInfoList = NULL;
+static NSString *MMGroupHookedClassName = nil;
+
+NSArray<NSString *> *MMGroupSessionMgrCandidates(void) {
+    return @[@"MMNewSessionMgr", @"NewSessionMgr", @"MMSessionMgr", @"SessionMgr",
+             @"MMSessionManager", @"NewSessionManager", @"MMSessionMgrLogic"];
+}
+
+BOOL MMGroupSessionListHookInstalled(void) {
+    return MMGroupOrigGetSessionInfoList != NULL;
+}
+
+NSString *MMGroupSessionListHookClassName(void) {
+    return MMGroupHookedClassName;
+}
+
+/// 钩子本体：摘掉分组内会话 + 在最前面插入「群助手」入口会话。
+static id MMGroupGetSessionInfoListHook(id self, SEL _cmd) {
+    id raw = MMGroupOrigGetSessionInfoList ? MMGroupOrigGetSessionInfoList(self, _cmd) : nil;
+    if (MMGroupIsBypassingListFilter()) return raw;
+    if (!MMGroupIsEnabled() || ![raw isKindOfClass:[NSArray class]]) return raw;
+
+    NSArray *list = (NSArray *)raw;          // 显式定型：不要对 id 用点语法
+    NSArray *grouped = MMGroupGroupedSessionsFromList(list);
+    if (grouped.count == 0) return list;
+
+    NSMutableSet<NSString *> *hidden = [NSMutableSet set];
+    for (id session in grouped) {
+        NSString *userName = MMGroupValue(session, @"m_nsUserName");
+        if ([userName isKindOfClass:[NSString class]] && userName.length) {
+            [hidden addObject:userName];
+        }
+    }
+
+    NSMutableArray *result = [NSMutableArray arrayWithCapacity:list.count + 1];
+    for (id session in list) {
+        NSString *userName = MMGroupValue(session, @"m_nsUserName");
+        if ([userName isKindOfClass:[NSString class]] && [hidden containsObject:userName]) continue;
+        [result addObject:session];
+    }
+    id helper = MMGroupMakeHelperSessionFromGrouped(grouped);
+    if (helper) [result insertObject:helper atIndex:0];
+    MMGroupLog(@"会话列表：收起 %lu 个，入口 %@", (unsigned long)hidden.count, helper ? @"已插入" : @"生成失败");
+    return [result copy];
+}
+
+BOOL MMGroupInstallSessionListHook(void) {
+    if (MMGroupOrigGetSessionInfoList != NULL) return YES;
+    SEL sel = NSSelectorFromString(@"GetSessionInfoList");
+    for (NSString *name in MMGroupSessionMgrCandidates()) {
+        Class cls = objc_getClass(name.UTF8String);
+        if (!cls) continue;
+        Method method = class_getInstanceMethod(cls, sel);
+        if (!method) continue;
+        MMGroupOrigGetSessionInfoList = (MMGroupGetListIMP)method_getImplementation(method);
+        method_setImplementation(method, (IMP)MMGroupGetSessionInfoListHook);
+        MMGroupHookedClassName = name;
+        MMGroupLog(@"已在 %@ 上安装 GetSessionInfoList 钩子", name);
+        return YES;
+    }
+    MMGroupLog(@"安装 GetSessionInfoList 钩子失败：候选类都不存在");
+    return NO;
+}
+
+void MMGroupForceReloadSessions(void) {
+    MMNewSessionMgr *mgr = MMGroupSessionMgr();
+    SEL sel = NSSelectorFromString(@"rebuildAndUpdateSessionInfo");
+    if (mgr && [mgr respondsToSelector:sel]) {
+        ((void (*)(id, SEL))objc_msgSend)(mgr, sel);
+        MMGroupLog(@"已请求微信重建会话列表");
+    } else {
+        MMGroupLog(@"rebuildAndUpdateSessionInfo 不存在，无法强制刷新");
+    }
+}
+
+#pragma mark - 诊断
+
+NSString *MMGroupDiagnostics(void) {
+    NSMutableString *out = [NSMutableString string];
+    NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
+    [out appendString:@"WCZZ 群助手诊断\n"];
+    [out appendFormat:@"微信版本: %@ (%@)\n", info[@"CFBundleShortVersionString"] ?: @"?", info[@"CFBundleVersion"] ?: @"?"];
+#ifdef PACKAGE_VERSION
+    [out appendFormat:@"插件版本: %s\n", PACKAGE_VERSION];
+#endif
+    [out appendString:@"\n-- 开关 --\n"];
+    [out appendFormat:@"启用: %@\n", MMGroupIsEnabled() ? @"是" : @"否（功能不会生效，去设置页打开）"];
+    [out appendFormat:@"常用群: %lu 个\n", (unsigned long)MMGroupCommonList().count];
+    [out appendFormat:@"手动加入: %lu 个\n", (unsigned long)MMGroupManualList().count];
+
+    [out appendString:@"\n-- 会话管理器候选类 --\n"];
+    for (NSString *name in MMGroupSessionMgrCandidates()) {
+        Class cls = objc_getClass(name.UTF8String);
+        if (!cls) {
+            [out appendFormat:@"%@: 无\n", name];
+            continue;
+        }
+        BOOL hasSel = class_getInstanceMethod(cls, NSSelectorFromString(@"GetSessionInfoList")) != NULL;
+        [out appendFormat:@"%@: 存在%@\n", name, hasSel ? @" / 有 GetSessionInfoList" : @" / 无 GetSessionInfoList"];
+    }
+    [out appendFormat:@"钩子: %@", MMGroupSessionListHookInstalled() ? @"已安装" : @"未安装"];
+    if (MMGroupSessionListHookInstalled()) [out appendFormat:@" (%@)", MMGroupSessionListHookClassName() ?: @"?"];
+    [out appendString:@"\n"];
+
+    // 决定性信息：不管类名怎么变，找出真正实现了 GetSessionInfoList 的类
+    [out appendString:@"\n-- 实现了 GetSessionInfoList 的类（全类扫描）--\n"];
+    SEL listSel = NSSelectorFromString(@"GetSessionInfoList");
+    unsigned int classCount = 0;
+    Class *classList = objc_copyClassList(&classCount);
+    NSMutableArray<NSString *> *owners = [NSMutableArray array];
+    if (classList) {
+        for (unsigned int i = 0; i < classCount; i++) {
+            Class cls = classList[i];
+            if (!cls) continue;
+            if (class_getInstanceMethod(cls, listSel)) {
+                [owners addObject:NSStringFromClass(cls)];
+            }
+        }
+        free(classList);
+    }
+    if (owners.count == 0) {
+        [out appendString:@"一个都没有（说明这个方法名在这个版本不存在）\n"];
+    } else {
+        for (NSString *name in [owners sortedArrayUsingSelector:@selector(compare:)]) {
+            [out appendFormat:@"%@\n", name];
+        }
+    }
+
+    [out appendString:@"\n-- 其它关键类 --\n"];
+    NSArray<NSString *> *classes = @[@"NewMainFrameViewController", @"MainFrameLogicController",
+                                     @"MainFrameCellDataManager", @"ChatRoomInfoViewController",
+                                     @"MMSessionInfo", @"MMServiceCenter", @"CContactMgr"];
+    for (NSString *name in classes) {
+        [out appendFormat:@"%@: %@\n", name, objc_getClass(name.UTF8String) ? @"存在" : @"无"];
+    }
+    Class mainFrame = objc_getClass("NewMainFrameViewController");
+    if (mainFrame) {
+        [out appendFormat:@"logicGetSessionAtIndexPath: %@\n",
+         [mainFrame instancesRespondToSelector:NSSelectorFromString(@"logicGetSessionAtIndexPath:")] ? @"有" : @"无"];
+        [out appendFormat:@"onLogicOpenSession: %@\n",
+         [mainFrame instancesRespondToSelector:NSSelectorFromString(@"onLogicOpenSession:")] ? @"有" : @"无"];
+    }
+
+    [out appendString:@"\n-- 会话数据 --\n"];
+    NSArray *all = MMGroupAllSessions();
+    NSArray *groups = MMGroupAllGroupSessions();
+    NSArray *grouped = MMGroupGroupedSessionsFromList(all);
+    [out appendFormat:@"会话总数: %lu（群聊 %lu）\n", (unsigned long)all.count, (unsigned long)groups.count];
+    [out appendFormat:@"应进分组: %lu\n", (unsigned long)grouped.count];
+    [out appendFormat:@"入口会话可生成: %@\n", MMGroupMakeHelperSessionFromGrouped(grouped) ? @"是" : @"否（分组为空或类缺失）"];
+    unsigned int unread = 0;
+    for (id session in grouped) unread += (unsigned int)[MMGroupValue(session, @"m_uUnReadCount") unsignedIntValue];
+    [out appendFormat:@"分组未读合计: %u\n", unread];
+    [out appendFormat:@"\n时间: %@", [NSDate date]];
+    return [out copy];
+}
+
 #pragma mark - 显示 / 诊断
 
 id MMGroupValueSafe(id object, NSString *key) {
@@ -299,7 +468,9 @@ id MMGroupValueSafe(id object, NSString *key) {
 }
 
 NSString *MMGroupRuntimeStatus(void) {
-    if (!objc_getClass("MMNewSessionMgr")) return @"不可用：缺少 MMNewSessionMgr";
+    if (!MMGroupSessionListHookInstalled() && !MMGroupInstallSessionListHook()) {
+        return @"不可用：找不到会话管理器类";
+    }
     if (!objc_getClass("MMSessionInfo")) return @"不可用：缺少 MMSessionInfo";
     Class helper = objc_getClass("NewMainFrameViewController");
     if (!helper) return @"部分可用：会话列表类缺失";

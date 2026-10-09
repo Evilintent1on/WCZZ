@@ -128,7 +128,7 @@ static id WCZZValue(id obj, NSString *key) {
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
-    return section == 2 ? 4 : 1;
+    return section == 2 ? 6 : 1;
 }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section { return 28.0; }
 - (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section { return section == 0 ? 8.0 : 0.01; }
@@ -166,6 +166,13 @@ static id WCZZValue(id obj, NSString *key) {
     } else if (ip.section == 2 && ip.row == 2) {
         c.textLabel.text=@"常用群（不进分组）";
         c.detailTextLabel.text=[NSString stringWithFormat:@"%lu 个", (unsigned long)[MMGroupCommonList() count]];
+        c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+    } else if (ip.section == 2 && ip.row == 3) {
+        c.textLabel.text=@"立即刷新会话列表"; c.detailTextLabel.text=MMGroupSessionListHookInstalled()?@"已挂钩子":@"**钩子未安装**";
+        c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+    } else if (ip.section == 2 && ip.row == 4) {
+        c.textLabel.text=@"诊断信息（可复制）";
+        c.detailTextLabel.text=MMGroupSessionListHookClassName() ?: @"";
         c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     } else if (ip.section == 2) {
         c.textLabel.text=@"调试日志"; c.selectionStyle=UITableViewCellSelectionStyleNone;
@@ -206,6 +213,26 @@ static id WCZZValue(id obj, NSString *key) {
             [tv reloadData];
         }];
         [self.navigationController pushViewController:picker animated:YES];
+    }
+    if (ip.section == 2 && ip.row == 3) {
+        MMGroupForceReloadSessions();
+        [tv reloadData];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"已请求刷新"
+                                                                       message:@"如果列表没变化，请打开「诊断信息」把内容发我。"
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+    }
+    if (ip.section == 2 && ip.row == 4) {
+        NSString *report = MMGroupDiagnostics();
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"群助手诊断"
+                                                                       message:report
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"复制" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            [UIPasteboard generalPasteboard].string = report;
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"关闭" style:UIAlertActionStyleCancel handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
     }
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
@@ -693,59 +720,121 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
 
 static const void *WCZZGroupCommonSwitchKey = &WCZZGroupCommonSwitchKey;
 
-%group WCZZGroupHooks
-
-// MiYou 式：从会话列表里摘掉分组内的会话，并在最前面插一个「群助手」入口会话。
-%hook MMNewSessionMgr
-
-- (id)GetSessionInfoList {
-    id list = %orig;
-    // 插件自己取原始列表时不过滤（选择页要看到全部会话）
-    if (MMGroupIsBypassingListFilter()) return list;
-    if (!MMGroupIsEnabled() || ![list isKindOfClass:[NSArray class]]) return list;
-
-    NSArray *grouped = MMGroupGroupedSessionsFromList(list);
-    if (grouped.count == 0) return list;
-
-    NSMutableSet<NSString *> *hidden = [NSMutableSet set];
-    for (id session in grouped) {
-        NSString *userName = MMGroupValueSafe(session, @"m_nsUserName");
-        if ([userName isKindOfClass:[NSString class]] && userName.length) {
-            [hidden addObject:userName];
-        }
+// 从会话 cell 反查 username（不同版本字段名不同，逐个试）。
+static NSString *WCZZGroupUserNameOfCell(id cell) {
+    if (!cell) return nil;
+    NSString *userName = WCZZValue(cell, @"m_nsUserName");
+    if (![userName isKindOfClass:[NSString class]] || !userName.length) {
+        userName = WCZZValue(cell, @"userName");
     }
-
-    NSMutableArray *result = [NSMutableArray arrayWithCapacity:[(NSArray *)list count] + 1];
-    for (id session in list) {
-        NSString *userName = MMGroupValueSafe(session, @"m_nsUserName");
-        if ([userName isKindOfClass:[NSString class]] && [hidden containsObject:userName]) continue;
-        [result addObject:session];
+    if (![userName isKindOfClass:[NSString class]] || !userName.length) {
+        id data = WCZZValue(cell, @"m_cellData") ?: WCZZValue(cell, @"m_data") ?: WCZZValue(cell, @"viewModel");
+        userName = WCZZValue(data, @"m_nsUserName") ?: WCZZValue(data, @"userName");
     }
-
-    id helper = MMGroupMakeHelperSessionFromGrouped(grouped);
-    if (helper) [result insertObject:helper atIndex:0];
-    MMGroupLog(@"会话列表：收起 %lu 个，插入入口 %@", (unsigned long)hidden.count, helper ? @"成功" : @"失败");
-    return [result copy];
+    return [userName isKindOfClass:[NSString class]] ? userName : nil;
 }
 
-%end
+// 列表里某一行对应的会话（主界面自己的取法）。
+static id WCZZGroupSessionAtIndexPath(id mainFrame, id indexPath) {
+    SEL sel = NSSelectorFromString(@"logicGetSessionAtIndexPath:");
+    if (!mainFrame || ![mainFrame respondsToSelector:sel]) return nil;
+    return ((id (*)(id, SEL, id))objc_msgSend)(mainFrame, sel, indexPath);
+}
+
+static BOOL WCZZGroupIsHelperIndexPath(id mainFrame, id indexPath) {
+    return MMGroupIsHelperSession(MMGroupValueSafe(WCZZGroupSessionAtIndexPath(mainFrame, indexPath), @"m_nsUserName"));
+}
+
+%group WCZZGroupHooks
+
+// 会话列表面板的钩子不在这里：会话管理器的类名各版本不同，改用
+// GroupHelperConfig 里的运行时安装（MMGroupInstallSessionListHook，候选类名探测）。
 
 // 点「群助手」那一行 → 进插件自己的列表页（不交给微信）。
 %hook NewMainFrameViewController
 
 - (void)tableView:(id)tableView didSelectRowAtIndexPath:(id)indexPath {
-    id session = nil;
-    SEL sessionSel = NSSelectorFromString(@"logicGetSessionAtIndexPath:");
-    if ([self respondsToSelector:sessionSel]) {
-        session = ((id (*)(id, SEL, id))objc_msgSend)(self, sessionSel, indexPath);
-    }
-    NSString *userName = MMGroupValueSafe(session, @"m_nsUserName");
-    if (MMGroupIsEnabled() && MMGroupIsHelperSession(userName)) {
+    if (MMGroupIsEnabled() && WCZZGroupIsHelperIndexPath(self, indexPath)) {
         MMGroupLog(@"点击入口会话，进入列表页");
         [self.navigationController pushViewController:[[GroupHelperListController alloc] init] animated:YES];
         return;
     }
     %orig;
+}
+
+// 入口会话不许删、不许侧滑（MiYou 同样拦了这些）
+- (void)tableView:(id)tableView commitEditingStyle:(long long)style forRowAtIndexPath:(id)indexPath {
+    if (MMGroupIsEnabled() && WCZZGroupIsHelperIndexPath(self, indexPath)) return;
+    %orig;
+}
+
+- (id)tableView:(id)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(id)indexPath {
+    if (MMGroupIsEnabled() && WCZZGroupIsHelperIndexPath(self, indexPath)) return nil;
+    return %orig;
+}
+
+- (id)tableView:(id)tableView leadingSwipeActionsConfigurationForRowAtIndexPath:(id)indexPath {
+    if (MMGroupIsEnabled() && WCZZGroupIsHelperIndexPath(self, indexPath)) return nil;
+    return %orig;
+}
+
+// 老版本微信有这个方法（8.0.79 已挪走），留着做兼容占位
+- (void)deleteSessionAtIndex:(long long)index {
+    %orig;
+}
+
+%end
+
+// cell 层：入口会话不给编辑样式
+%hook NewMainFrameCell
+
+- (void)checkTableViewEditingStyle {
+    if (MMGroupIsEnabled() && MMGroupIsHelperSession(WCZZGroupUserNameOfCell(self))) return;
+    %orig;
+}
+
+- (void)onCommitEditingWithStyle:(long long)style tableView:(id)tableView {
+    if (MMGroupIsEnabled() && MMGroupIsHelperSession(WCZZGroupUserNameOfCell(self))) return;
+    %orig;
+}
+
+%end
+
+// cell 数据：入口会话拿不到联系人，这里把结果打出来（出问题看日志/诊断）
+%hook MainFrameCellDataManager
+
+- (id)getCellDataByUsrName:(id)userName {
+    id data = %orig;
+    if (MMGroupIsHelperSession(userName)) {
+        MMGroupLog(@"入口会话 cellData: %@", data ? NSStringFromClass([data class]) : @"nil");
+    }
+    return data;
+}
+
+- (id)getCellData:(id)arg1 {
+    return %orig;
+}
+
+%end
+
+// 前台会话相关（MiYou 也挂过，做个透传，防止入口会话被当成"最后会话"保存）
+%hook MainFrameLogicController
+
+- (void)asyncSaveFrontUserName {
+    %orig;
+}
+
+- (void)syncSaveFrontUserName {
+    %orig;
+}
+
+%end
+
+// 未读显示判定（透传）
+%hook CContact
+
+- (BOOL)needShowUnreadCountOnSession {
+    return %orig;
 }
 
 %end
@@ -891,11 +980,14 @@ static void WCZZInstallHooksWhenReady(void) {
             WCZZMenuHooksStarted = YES;
             WCZZLog(@"menu hooks installed");
         }
-        if (!WCZZGroupHooksStarted && objc_getClass("MMNewSessionMgr")) {
+        // 群助手：Logos 部分只依赖主界面类（你项目头文件里已验证存在）；
+        // 会话管理器的钩子单独探测安装，装在哪个候选类上会写进「诊断信息」。
+        if (!WCZZGroupHooksStarted && objc_getClass("NewMainFrameViewController")) {
             %init(WCZZGroupHooks);
             WCZZGroupHooksStarted = YES;
             WCZZLog(@"group hooks installed");
         }
+        MMGroupInstallSessionListHook();
         WCZZRegisterPlugin();
         if ((!WCZZRedHooksStarted || !WCZZMenuHooksStarted || !WCZZGroupHooksStarted || !WCZZRegistered) && WCZZInstallAttempts++ < 60) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)),

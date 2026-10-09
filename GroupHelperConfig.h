@@ -77,6 +77,21 @@ id _Nullable MMGroupValueSafe(id _Nullable object, NSString *key);
 /// 运行时自检
 NSString *MMGroupRuntimeStatus(void);
 
+#pragma mark - 会话列表钩子（多候选类名探测安装）
+
+/// 候选类名：不同微信版本会话管理器的叫法不同，逐个探测。
+NSArray<NSString *> *MMGroupSessionMgrCandidates(void);
+/// 尝试安装 GetSessionInfoList 钩子；返回 YES 表示装上了。
+BOOL MMGroupInstallSessionListHook(void);
+/// 钩子是否已装 / 装在哪个类上（诊断用）。
+BOOL MMGroupSessionListHookInstalled(void);
+NSString *MMGroupSessionListHookClassName(void);
+/// 让微信重建并刷新会话列表。
+void MMGroupForceReloadSessions(void);
+
+/// 一键诊断文本（设置页可复制）：版本、类/方法是否存在、钩子状态、会话统计。
+NSString *MMGroupDiagnostics(void);
+
 NS_ASSUME_NONNULL_END
 
 #ifdef __cplusplus

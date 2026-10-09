@@ -9,6 +9,7 @@
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
 
 // 会话模型：群助手要读 username / 昵称 / 未读数，并合成一个「群助手」入口会话
 // （合成走 KVC，字段见 GroupHelperConfig.m）。
