@@ -387,7 +387,7 @@ NSString *MMGroupDiagnostics(void) {
     [out appendString:@"WCZZ 群助手诊断\n"];
     [out appendFormat:@"微信版本: %@ (%@)\n", info[@"CFBundleShortVersionString"] ?: @"?", info[@"CFBundleVersion"] ?: @"?"];
 #ifdef PACKAGE_VERSION
-    [out appendFormat:@"插件版本: %s\n", PACKAGE_VERSION];
+    [out appendFormat:@"插件版本: %@\n", PACKAGE_VERSION];
 #endif
     [out appendString:@"\n-- 开关 --\n"];
     [out appendFormat:@"启用: %@\n", MMGroupIsEnabled() ? @"是" : @"否（功能不会生效，去设置页打开）"];
