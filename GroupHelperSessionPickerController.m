@@ -89,7 +89,7 @@
     } else {
         NSMutableArray *hits = [NSMutableArray array];
         for (id session in self.sessions) {
-            NSString *userName = MMGroupValueSafe(session, @"m_nsUserName");
+            NSString *userName = MMGroupUserNameOfSession(session);
             NSString *display = MMGroupDisplayName(userName, MMGroupValueSafe(session, @"m_nsNickName"));
             if ([[display lowercaseString] containsString:keyword] ||
                 [[userName lowercaseString] containsString:keyword]) {
@@ -118,7 +118,7 @@
         }
     }
     id session = self.filtered[(NSUInteger)indexPath.row];
-    NSString *userName = MMGroupValueSafe(session, @"m_nsUserName");
+    NSString *userName = MMGroupUserNameOfSession(session);
     NSString *display = MMGroupDisplayName(userName, MMGroupValueSafe(session, @"m_nsNickName"));
 
     cell.textLabel.text = display;
@@ -131,7 +131,7 @@
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     id session = self.filtered[(NSUInteger)indexPath.row];
-    NSString *userName = MMGroupValueSafe(session, @"m_nsUserName");
+    NSString *userName = MMGroupUserNameOfSession(session);
     if (![userName isKindOfClass:[NSString class]] || !userName.length) return;
     if ([self.selected containsObject:userName]) {
         [self.selected removeObject:userName];

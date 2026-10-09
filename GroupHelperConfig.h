@@ -74,6 +74,17 @@ id _Nullable MMGroupMakeHelperSession(void);
 NSString *MMGroupDisplayName(NSString * _Nullable userName, NSString * _Nullable fallback);
 id _Nullable MMGroupValueSafe(id _Nullable object, NSString *key);
 
+/// 会话字段读取（KVC 多 key + ivar 直读兜底，避免某些版本 KVC 取不到）
+NSString * _Nullable MMGroupUserNameOfSession(id _Nullable session);
+unsigned int MMGroupUnreadOfSession(id _Nullable session);
+unsigned int MMGroupSortTimeOfSession(id _Nullable session);
+
+/// 找到主界面控制器（NewMainFrameViewController）
+UIViewController * _Nullable MMGroupMainFrameController(void);
+
+/// 诊断用：单个会话的字段探测文本
+NSString *MMGroupDescribeSession(id session);
+
 /// 运行时自检
 NSString *MMGroupRuntimeStatus(void);
 

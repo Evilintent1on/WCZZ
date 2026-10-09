@@ -30,8 +30,94 @@ static id MMGroupValue(id object, NSString *key) {
 }
 
 static NSString *MMGroupUserNameOf(id session) {
-    NSString *userName = MMGroupValue(session, @"m_nsUserName");
-    return [userName isKindOfClass:[NSString class]] ? userName : nil;
+    return MMGroupUserNameOfSession(session);
+}
+
+#pragma mark - 会话字段读取（KVC + ivar 兜底）
+
+static id MMGroupIvarValue(id object, NSArray<NSString *> *names) {
+    if (!object) return nil;
+    for (NSString *name in names) {
+        Ivar ivar = class_getInstanceVariable([object class], name.UTF8String);
+        if (!ivar) continue;
+        const char *type = ivar_getTypeEncoding(ivar);
+        if (!type || type[0] != '@') continue;   // 只直读对象类型
+        id value = object_getIvar(object, ivar);
+        if (value) return value;
+    }
+    return nil;
+}
+
+NSString *MMGroupUserNameOfSession(id session) {
+    if (!session) return nil;
+    for (NSString *key in @[@"m_nsUserName", @"userName", @"nsUserName", @"username", @"m_username"]) {
+        id value = MMGroupValue(session, key);
+        if ([value isKindOfClass:[NSString class]] && [value length]) return value;
+    }
+    id value = MMGroupIvarValue(session, @[@"m_nsUserName", @"_m_nsUserName", @"m_username", @"m_userName"]);
+    return [value isKindOfClass:[NSString class]] ? value : nil;
+}
+
+unsigned int MMGroupUnreadOfSession(id session) {
+    if (!session) return 0;
+    for (NSString *key in @[@"m_uUnReadCount", @"m_uUnreadCount", @"unreadCount", @"m_nUnReadCount"]) {
+        id value = MMGroupValue(session, key);
+        if ([value respondsToSelector:@selector(unsignedIntValue)]) return [value unsignedIntValue];
+    }
+    return 0;
+}
+
+unsigned int MMGroupSortTimeOfSession(id session) {
+    if (!session) return 0;
+    for (NSString *key in @[@"sortTime", @"m_uSortTime", @"m_uTopTime", @"m_uUpdateTime"]) {
+        id value = MMGroupValue(session, key);
+        if ([value respondsToSelector:@selector(unsignedIntValue)]) return [value unsignedIntValue];
+    }
+    return 0;
+}
+
+NSString *MMGroupDescribeSession(id session) {
+    if (!session) return @"(nil)";
+    NSMutableString *out = [NSMutableString string];
+    [out appendFormat:@"类=%@ ", NSStringFromClass([session class])];
+    for (NSString *key in @[@"m_nsUserName", @"m_nsNickName", @"m_uUnReadCount", @"sortTime"]) {
+        id value = MMGroupValue(session, key);
+        [out appendFormat:@"%@=%@ ", key, value ?: @"(nil)"];
+    }
+    Ivar ivar = class_getInstanceVariable([session class], "m_nsUserName");
+    [out appendFormat:@"| ivar=%@ ", ivar ? (object_getIvar(session, ivar) ?: @"(nil)") : @"(无)"];
+    [out appendFormat:@"| 解析=%@", MMGroupUserNameOfSession(session) ?: @"(失败)"];
+    return out;
+}
+
+#pragma mark - 主界面控制器
+
+UIViewController *MMGroupMainFrameController(void) {
+    Class mainFrameClass = objc_getClass("NewMainFrameViewController");
+    if (!mainFrameClass) return nil;
+    UIWindow *window = nil;
+    for (UIWindow *candidate in [UIApplication sharedApplication].windows) {
+        if (candidate.isKeyWindow) { window = candidate; break; }
+    }
+    if (!window) window = [UIApplication sharedApplication].keyWindow;
+    NSMutableArray<UIViewController *> *stack = [NSMutableArray array];
+    if (window.rootViewController) [stack addObject:window.rootViewController];
+    NSInteger guard = 0;
+    while (stack.count && guard++ < 64) {
+        UIViewController *controller = stack.firstObject;
+        [stack removeObjectAtIndex:0];
+        if ([controller isKindOfClass:mainFrameClass]) return controller;
+        if (controller.presentedViewController) [stack addObject:controller.presentedViewController];
+        if ([controller isKindOfClass:[UINavigationController class]]) {
+            [stack addObjectsFromArray:((UINavigationController *)controller).viewControllers];
+        }
+        if ([controller isKindOfClass:[UITabBarController class]]) {
+            UIViewController *selected = ((UITabBarController *)controller).selectedViewController;
+            if (selected) [stack addObject:selected];
+        }
+        [stack addObjectsFromArray:controller.childViewControllers];
+    }
+    return nil;
 }
 
 static MMNewSessionMgr *MMGroupSessionMgr(void) {
@@ -261,37 +347,33 @@ id MMGroupMakeHelperSessionFromGrouped(NSArray *grouped) {
     unsigned int unread = 0;
     unsigned int latest = 0;
     for (id session in grouped) {
-        unread += (unsigned int)[MMGroupValue(session, @"m_uUnReadCount") unsignedIntValue];
-        unsigned int sortTime = (unsigned int)[MMGroupValue(session, @"sortTime") unsignedIntValue];
+        unread += MMGroupUnreadOfSession(session);
+        unsigned int sortTime = MMGroupSortTimeOfSession(session);
         if (sortTime > latest) latest = sortTime;
     }
 
     Class infoClass = objc_getClass("MMSessionInfo");
     if (!infoClass) return nil;
 
-    id info = nil;
-    MMNewSessionMgr *mgr = MMGroupSessionMgr();
-    SEL genSel = NSSelectorFromString(@"genSessionInfoByUserName:");
-    if (mgr && [mgr respondsToSelector:genSel]) {
-        info = ((id (*)(id, SEL, id))objc_msgSend)(mgr, genSel, MMGroupHelperUserName());
-    }
-    if (![info isKindOfClass:infoClass]) {
-        info = [[infoClass alloc] init];
-    }
+    // 不调 genSessionInfoByUserName:（它会回调会话列表 → 递归/崩溃风险），直接造一个空会话再填字段
+    id info = [[infoClass alloc] init];
     if (!info) return nil;
 
     unsigned int now = (unsigned int)[[NSDate date] timeIntervalSince1970];
-    @try {
-        [info setValue:MMGroupHelperUserName() forKey:@"m_nsUserName"];
-        [info setValue:MMGroupHelperTitle() forKey:@"m_nsNickName"];
-        [info setValue:@(unread) forKey:@"m_uUnReadCount"];
-        [info setValue:@(NO) forKey:@"m_bShowUnReadAsRedDot"];
-        [info setValue:@(MAX(latest, now)) forKey:@"sortTime"];
-        [info setValue:@(now) forKey:@"m_uTopTime"];
-        [info setValue:@(0) forKey:@"m_uUnTopTime"];
-    } @catch (NSException *exception) {
-        MMGroupLog(@"合成入口会话失败: %@", exception);
-    }
+    void (^setValue)(NSString *, id) = ^(NSString *key, id value) {
+        @try {
+            [info setValue:value forKey:key];
+        } @catch (__unused NSException *exception) {
+            // 该版本没有这个字段，忽略
+        }
+    };
+    setValue(@"m_nsUserName", MMGroupHelperUserName());
+    setValue(@"m_nsNickName", MMGroupHelperTitle());
+    setValue(@"m_uUnReadCount", @(unread));
+    setValue(@"m_bShowUnReadAsRedDot", @(NO));
+    setValue(@"sortTime", @(MAX(latest, now)));
+    setValue(@"m_uTopTime", @(now));
+    setValue(@"m_uUnTopTime", @(0));
     MMGroupLog(@"入口会话: %lu 个会话, 未读 %u", (unsigned long)grouped.count, unread);
     return info;
 }
@@ -321,33 +403,44 @@ NSString *MMGroupSessionListHookClassName(void) {
 }
 
 /// 钩子本体：摘掉分组内会话 + 在最前面插入「群助手」入口会话。
+/// 整个实现都在 bypass 标志 + @try 里：微信内部任何再次取列表的调用都不会递归，异常也不会崩微信。
 static id MMGroupGetSessionInfoListHook(id self, SEL _cmd) {
     id raw = MMGroupOrigGetSessionInfoList ? MMGroupOrigGetSessionInfoList(self, _cmd) : nil;
     if (MMGroupIsBypassingListFilter()) return raw;
     if (!MMGroupIsEnabled() || ![raw isKindOfClass:[NSArray class]]) return raw;
 
-    NSArray *list = (NSArray *)raw;          // 显式定型：不要对 id 用点语法
-    NSArray *grouped = MMGroupGroupedSessionsFromList(list);
-    if (grouped.count == 0) return list;
-
-    NSMutableSet<NSString *> *hidden = [NSMutableSet set];
-    for (id session in grouped) {
-        NSString *userName = MMGroupValue(session, @"m_nsUserName");
-        if ([userName isKindOfClass:[NSString class]] && userName.length) {
-            [hidden addObject:userName];
+    BOOL previous = MMGroupIsBypassingListFilter();
+    MMGroupSetBypassingListFilter(YES);      // 防止内部回调再次进入本钩子
+    id result = raw;
+    @try {
+        NSArray *list = (NSArray *)raw;
+        NSArray *grouped = MMGroupGroupedSessionsFromList(list);
+        if (grouped.count > 0) {
+            NSMutableSet<NSString *> *hidden = [NSMutableSet set];
+            for (id session in grouped) {
+                NSString *userName = MMGroupUserNameOfSession(session);
+                if (userName.length) [hidden addObject:userName];
+            }
+            NSMutableArray *filtered = [NSMutableArray arrayWithCapacity:list.count + 1];
+            for (id session in list) {
+                NSString *userName = MMGroupUserNameOfSession(session);
+                if (userName.length && [hidden containsObject:userName]) continue;
+                [filtered addObject:session];
+            }
+            id helper = MMGroupMakeHelperSessionFromGrouped(grouped);
+            if (helper) [filtered insertObject:helper atIndex:0];
+            MMGroupLog(@"会话列表：收起 %lu 个（原始 %lu），入口 %@",
+                       (unsigned long)hidden.count, (unsigned long)list.count, helper ? @"已插入" : @"生成失败");
+            result = [filtered copy];
+        } else {
+            MMGroupLog(@"会话列表：没有需要收起的会话（原始 %lu 个）", (unsigned long)list.count);
         }
+    } @catch (NSException *exception) {
+        MMGroupLog(@"会话列表钩子异常: %@", exception);
+        result = raw;
     }
-
-    NSMutableArray *result = [NSMutableArray arrayWithCapacity:list.count + 1];
-    for (id session in list) {
-        NSString *userName = MMGroupValue(session, @"m_nsUserName");
-        if ([userName isKindOfClass:[NSString class]] && [hidden containsObject:userName]) continue;
-        [result addObject:session];
-    }
-    id helper = MMGroupMakeHelperSessionFromGrouped(grouped);
-    if (helper) [result insertObject:helper atIndex:0];
-    MMGroupLog(@"会话列表：收起 %lu 个，入口 %@", (unsigned long)hidden.count, helper ? @"已插入" : @"生成失败");
-    return [result copy];
+    MMGroupSetBypassingListFilter(previous);
+    return result;
 }
 
 BOOL MMGroupInstallSessionListHook(void) {
@@ -369,13 +462,27 @@ BOOL MMGroupInstallSessionListHook(void) {
 }
 
 void MMGroupForceReloadSessions(void) {
-    MMNewSessionMgr *mgr = MMGroupSessionMgr();
-    SEL sel = NSSelectorFromString(@"rebuildAndUpdateSessionInfo");
-    if (mgr && [mgr respondsToSelector:sel]) {
-        ((void (*)(id, SEL))objc_msgSend)(mgr, sel);
-        MMGroupLog(@"已请求微信重建会话列表");
-    } else {
-        MMGroupLog(@"rebuildAndUpdateSessionInfo 不存在，无法强制刷新");
+    // 不要调 rebuildAndUpdateSessionInfo（会触发完整重建 → 回调本钩子，容易递归/崩溃）。
+    // 安全做法：让主界面把可见的表格重新加载一次。
+    @try {
+        UIViewController *mainFrame = MMGroupMainFrameController();
+        BOOL reloaded = NO;
+        if (mainFrame) {
+            id tableView = MMGroupValue(mainFrame, @"tableView");
+            if ([tableView isKindOfClass:[UITableView class]]) {
+                [(UITableView *)tableView reloadData];
+                reloaded = YES;
+            }
+            SEL reloadSel = NSSelectorFromString(@"reloadTableData");
+            if ([mainFrame respondsToSelector:reloadSel]) {
+                ((void (*)(id, SEL))objc_msgSend)(mainFrame, reloadSel);
+                reloaded = YES;
+            }
+        }
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"MMSessionInfoChanged" object:nil];
+        MMGroupLog(@"刷新会话列表：%@", reloaded ? @"已重新加载" : @"没找到主界面，仅发了通知");
+    } @catch (NSException *exception) {
+        MMGroupLog(@"刷新会话列表异常: %@", exception);
     }
 }
 
@@ -455,8 +562,19 @@ NSString *MMGroupDiagnostics(void) {
     [out appendFormat:@"应进分组: %lu\n", (unsigned long)grouped.count];
     [out appendFormat:@"入口会话可生成: %@\n", MMGroupMakeHelperSessionFromGrouped(grouped) ? @"是" : @"否（分组为空或类缺失）"];
     unsigned int unread = 0;
-    for (id session in grouped) unread += (unsigned int)[MMGroupValue(session, @"m_uUnReadCount") unsignedIntValue];
+    for (id session in grouped) unread += MMGroupUnreadOfSession(session);
     [out appendFormat:@"分组未读合计: %u\n", unread];
+
+    // 决定性信息：会话字段到底能不能取到
+    [out appendString:@"\n-- 会话样本（前 3 个）--\n"];
+    if (all.count == 0) {
+        [out appendString:@"（一个会话都没取到 → GetSessionInfoList 拿到的不是会话数组）\n"];
+    } else {
+        NSUInteger limit = MIN((NSUInteger)3, all.count);
+        for (NSUInteger i = 0; i < limit; i++) {
+            [out appendFormat:@"[%lu] %@\n", (unsigned long)i, MMGroupDescribeSession(all[i])];
+        }
+    }
     [out appendFormat:@"\n时间: %@", [NSDate date]];
     return [out copy];
 }
@@ -468,18 +586,21 @@ id MMGroupValueSafe(id object, NSString *key) {
 }
 
 NSString *MMGroupRuntimeStatus(void) {
+    // 会话管理器：钩子装上了就是可用（类名不写死）
     if (!MMGroupSessionListHookInstalled() && !MMGroupInstallSessionListHook()) {
         return @"不可用：找不到会话管理器类";
     }
     if (!objc_getClass("MMSessionInfo")) return @"不可用：缺少 MMSessionInfo";
-    Class helper = objc_getClass("NewMainFrameViewController");
-    if (!helper) return @"部分可用：会话列表类缺失";
-    NSArray<NSString *> *needed = @[@"GetSessionInfoList", @"logicGetSessionAtIndexPath:", @"onLogicOpenSession:"];
-    for (NSString *selectorName in needed) {
-        SEL sel = NSSelectorFromString(selectorName);
-        if (![helper instancesRespondToSelector:sel] && ![helper respondsToSelector:sel]) {
-            return [NSString stringWithFormat:@"部分可用：缺少 %@", selectorName];
+
+    Class mainFrame = objc_getClass("NewMainFrameViewController");
+    if (!mainFrame) return @"不可用：缺少会话列表类";
+    for (NSString *selectorName in @[@"logicGetSessionAtIndexPath:", @"onLogicOpenSession:"]) {
+        if (![mainFrame instancesRespondToSelector:NSSelectorFromString(selectorName)]) {
+            return [NSString stringWithFormat:@"部分可用：主界面缺少 %@", selectorName];
         }
+    }
+    if (!objc_getClass("ChatRoomInfoViewController")) {
+        return @"部分可用：群聊信息页开关缺失";
     }
     return @"可用";
 }

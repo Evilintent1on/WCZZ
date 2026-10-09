@@ -17,37 +17,7 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 
-#pragma mark - 找主界面控制器（用来打开会话）
-
-static UIViewController *MMGroupFindIn(UIViewController *controller, NSInteger depth) {
-    if (!controller || depth > 12) return nil;
-    Class mainFrameClass = NSClassFromString(@"NewMainFrameViewController");
-    if (mainFrameClass && [controller isKindOfClass:mainFrameClass]) return controller;
-    if ([controller isKindOfClass:[UINavigationController class]]) {
-        for (UIViewController *child in ((UINavigationController *)controller).viewControllers) {
-            UIViewController *found = MMGroupFindIn(child, depth + 1);
-            if (found) return found;
-        }
-    }
-    if ([controller isKindOfClass:[UITabBarController class]]) {
-        UIViewController *found = MMGroupFindIn(((UITabBarController *)controller).selectedViewController, depth + 1);
-        if (found) return found;
-    }
-    for (UIViewController *child in controller.childViewControllers) {
-        UIViewController *found = MMGroupFindIn(child, depth + 1);
-        if (found) return found;
-    }
-    return MMGroupFindIn(controller.presentedViewController, depth + 1);
-}
-
-static UIViewController *MMGroupMainFrameController(void) {
-    UIWindow *window = nil;
-    for (UIWindow *candidate in [UIApplication sharedApplication].windows) {
-        if (candidate.isKeyWindow) { window = candidate; break; }
-    }
-    if (!window) window = [UIApplication sharedApplication].keyWindow;
-    return MMGroupFindIn(window.rootViewController, 0);
-}
+#pragma mark - 头像
 
 static UIImage *MMGroupAvatarForUserName(NSString *userName) {
     if (![userName isKindOfClass:[NSString class]] || !userName.length) return nil;
@@ -136,9 +106,9 @@ static UIImage *MMGroupAvatarForUserName(NSString *userName) {
         cell.imageView.clipsToBounds = YES;
     }
     id session = self.sessions[(NSUInteger)indexPath.row];
-    NSString *userName = MMGroupValueSafe(session, @"m_nsUserName");
+    NSString *userName = MMGroupUserNameOfSession(session);
     NSString *display = MMGroupDisplayName(userName, MMGroupValueSafe(session, @"m_nsNickName"));
-    unsigned int unread = (unsigned int)[MMGroupValueSafe(session, @"m_uUnReadCount") unsignedIntValue];
+    unsigned int unread = MMGroupUnreadOfSession(session);
 
     cell.textLabel.text = display;
     cell.detailTextLabel.text = unread ? [NSString stringWithFormat:@"%u 条未读", unread] : nil;
@@ -172,7 +142,7 @@ static UIImage *MMGroupAvatarForUserName(NSString *userName) {
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView
     trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)indexPath {
     id session = self.sessions[(NSUInteger)indexPath.row];
-    NSString *userName = MMGroupValueSafe(session, @"m_nsUserName");
+    NSString *userName = MMGroupUserNameOfSession(session);
     if (![userName isKindOfClass:[NSString class]] || !userName.length) return nil;
 
     UIContextualAction *remove = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive

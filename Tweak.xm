@@ -138,8 +138,7 @@ static id WCZZValue(id obj, NSString *key) {
     return @"群助手";
 }
 - (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)section {
-    if (section == 2) return @"开启后所有群聊会收进「群助手」这一项，点它进入分组列表。想让某个群留在会话列表，就在群聊信息页把它设为「常用群」。";
-    return nil;
+    return nil;   // 页脚会和最后一行重叠，说明文字放到行内了
 }
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell *c = [tv dequeueReusableCellWithIdentifier:@"wczz.setting"]; if (!c) c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:@"wczz.setting"];
@@ -742,7 +741,7 @@ static id WCZZGroupSessionAtIndexPath(id mainFrame, id indexPath) {
 }
 
 static BOOL WCZZGroupIsHelperIndexPath(id mainFrame, id indexPath) {
-    return MMGroupIsHelperSession(MMGroupValueSafe(WCZZGroupSessionAtIndexPath(mainFrame, indexPath), @"m_nsUserName"));
+    return MMGroupIsHelperSession(MMGroupUserNameOfSession(WCZZGroupSessionAtIndexPath(mainFrame, indexPath)));
 }
 
 %group WCZZGroupHooks
@@ -760,6 +759,12 @@ static BOOL WCZZGroupIsHelperIndexPath(id mainFrame, id indexPath) {
         return;
     }
     %orig;
+}
+
+// 每次会话列表出现时，让列表按最新分组重算（安全刷新，不会触发微信重建）
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    if (MMGroupIsEnabled()) MMGroupForceReloadSessions();
 }
 
 // 入口会话不许删、不许侧滑（MiYou 同样拦了这些）
