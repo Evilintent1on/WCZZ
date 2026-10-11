@@ -126,21 +126,6 @@ UIViewController *MMGroupMainFrameController(void) {
     return nil;
 }
 
-static NSMutableArray<NSString *> *MMGroupStoredList(NSString *key) {
-    id raw = [[NSUserDefaults standardUserDefaults] arrayForKey:key];
-    NSMutableArray<NSString *> *list = [NSMutableArray array];
-    if ([raw isKindOfClass:[NSArray class]]) {
-        for (id item in raw) {
-            if ([item isKindOfClass:[NSString class]] && [item length]) [list addObject:item];
-        }
-    }
-    return list;
-}
-
-static void MMGroupStoreList(NSArray<NSString *> *list, NSString *key) {
-    [[NSUserDefaults standardUserDefaults] setObject:(list ?: @[]) forKey:key];
-}
-
 static MMNewSessionMgr *MMGroupSessionMgr(void) {
     Class centerClass = objc_getClass("MMServiceCenter");
     if (!centerClass) return nil;
