@@ -33,6 +33,7 @@ FOUNDATION_EXPORT NSString * const MMGroupHelperIdxKey;  // wczz.group.helperIdx
 FOUNDATION_EXPORT NSString * const MMGroupIncoTypeKey;   // wczz.group.incoType    helperIncoType
 FOUNDATION_EXPORT NSString * const MMGroupRoomListKey;   // wczz.group.roomList    RoomList（白名单）
 FOUNDATION_EXPORT NSString * const MMGroupTitleKey;      // wczz.group.title       roomName
+FOUNDATION_EXPORT NSString * const MMGroupAutoAllKey;    // wczz.group.autoAllGroups
 FOUNDATION_EXPORT NSString * const MMGroupDebugKey;      // wczz.group.debug
 
 #pragma mark - 开关（对应 GroupTool 的 isOpen*）
@@ -56,6 +57,9 @@ void MMGroupLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
 #pragma mark - RoomList（白名单）
 
 NSString *MMGroupAccountName(void);          // 当前登录账号（RoomList 按账号分存）
+/// 所有群聊自动加入密群列表（默认关 = MiYou 的名单行为）
+BOOL MMGroupAutoAllGroups(void);
+void MMGroupSetAutoAllGroups(BOOL autoAll);
 NSArray<NSString *> *MMGroupRoomList(void);
 void MMGroupSetRoomList(NSArray<NSString *> *list);
 BOOL MMGroupIsInRoomList(NSString * _Nullable userName);

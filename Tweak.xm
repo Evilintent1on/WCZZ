@@ -20,7 +20,6 @@
 @interface NewMainFrameViewController (WCZZGroupHelper)
 - (void)wczzGroupSetInside:(BOOL)inside;
 - (void)wczzGroupExitInside;
-- (void)wczzGroupPushRoomHelper;
 @property (nonatomic, assign) BOOL inRoomList;   // MiYou 注入的同名属性
 @end
 
@@ -137,7 +136,7 @@ static id WCZZValue(id obj, NSString *key) {
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
-    return section == 2 ? 8 : 1;
+    return section == 2 ? 9 : 1;
 }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section { return 28.0; }
 - (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section { return section == 0 ? 8.0 : 0.01; }
@@ -179,16 +178,22 @@ static id WCZZValue(id obj, NSString *key) {
         sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else if (ip.section == 2 && ip.row == 3) {
+        c.textLabel.text=@"所有群聊自动加入"; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        c.detailTextLabel.text=MMGroupAutoAllGroups()?@"含全部群":@"仅名单";
+        UISwitch *sw=[UISwitch new]; sw.tag=204; sw.on=MMGroupAutoAllGroups(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
+        sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
+        [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
+    } else if (ip.section == 2 && ip.row == 4) {
         c.textLabel.text=@"未读样式"; c.detailTextLabel.text=(MMGroupHelperIncoType()==1)?@"红点":@"数字";
         c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
-    } else if (ip.section == 2 && ip.row == 4) {
+    } else if (ip.section == 2 && ip.row == 5) {
         c.textLabel.text=@"群助手名称"; c.detailTextLabel.text=MMGroupHelperTitle();
         c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
-    } else if (ip.section == 2 && ip.row == 5) {
+    } else if (ip.section == 2 && ip.row == 6) {
         c.textLabel.text=@"密群列表";
         c.detailTextLabel.text=[NSString stringWithFormat:@"已选 %lu 个群", (unsigned long)[MMGroupRoomList() count]];
         c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
-    } else if (ip.section == 2 && ip.row == 6) {
+    } else if (ip.section == 2 && ip.row == 7) {
         c.textLabel.text=@"诊断信息（可复制）"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     } else if (ip.section == 2) {
         c.textLabel.text=@"调试日志"; c.selectionStyle=UITableViewCellSelectionStyleNone;
@@ -204,16 +209,17 @@ static id WCZZValue(id obj, NSString *key) {
     if (sw.tag == 201) { MMGroupSetShowHelper(sw.on); [self.tableView reloadData]; }
     if (sw.tag == 202) { MMGroupSetHelperTop(sw.on); [self.tableView reloadData]; }
     if (sw.tag == 203) MMGroupSetDebugEnabled(sw.on);
+    if (sw.tag == 204) { MMGroupSetAutoAllGroups(sw.on); MMGroupForceReloadSessions(); [self.tableView reloadData]; }
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
     if (ip.section == 1) [self.navigationController pushViewController:[MessageMenuSettingsController new] animated:YES];
-    if (ip.section == 2 && ip.row == 3) {
+    if (ip.section == 2 && ip.row == 4) {
         MMGroupSetHelperIncoType(MMGroupHelperIncoType() == 1 ? 0 : 1);
         [tv reloadData];
     }
-    if (ip.section == 2 && ip.row == 4) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"入口名称"
+    if (ip.section == 2 && ip.row == 5) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"群助手名称"
                                                                        message:nil
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
@@ -227,7 +233,7 @@ static id WCZZValue(id obj, NSString *key) {
         }]];
         [self presentViewController:alert animated:YES completion:nil];
     }
-    if (ip.section == 2 && ip.row == 5) {
+    if (ip.section == 2 && ip.row == 6) {
         GroupHelperSessionPickerController *picker =
             [[GroupHelperSessionPickerController alloc] initWithMode:GroupHelperPickerModeRoomList
                                                           completion:^(NSUInteger count) {
@@ -236,7 +242,7 @@ static id WCZZValue(id obj, NSString *key) {
         }];
         [self.navigationController pushViewController:picker animated:YES];
     }
-    if (ip.section == 2 && ip.row == 6) {
+    if (ip.section == 2 && ip.row == 7) {
         NSString *report = nil;
         @try { report = MMGroupDiagnostics(); } @catch (NSException *exception) { report = nil; }
         if (![report isKindOfClass:[NSString class]] || !report.length) {
@@ -913,6 +919,11 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
 }
 
 - (id)tableView:(id)tableView leadingSwipeActionsConfigurationForRowAtIndexPath:(id)indexPath {
+    if (MMGroupIsEnabled() && WCZZGroupIsHelperIndexPath(self, indexPath)) return nil;
+    return %orig;
+}
+
+- (id)tableView:(id)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(id)indexPath {
     if (MMGroupIsEnabled() && WCZZGroupIsHelperIndexPath(self, indexPath)) return nil;
     return %orig;
 }

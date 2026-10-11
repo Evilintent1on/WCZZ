@@ -17,6 +17,7 @@ NSString * const MMGroupHelperIdxKey  = @"wczz.group.helperIdx";
 NSString * const MMGroupIncoTypeKey   = @"wczz.group.incoType";
 NSString * const MMGroupRoomListKey   = @"wczz.group.roomList";
 NSString * const MMGroupTitleKey      = @"wczz.group.title";
+NSString * const MMGroupAutoAllKey    = @"wczz.group.autoAllGroups";
 NSString * const MMGroupDebugKey      = @"wczz.group.debug";
 
 static NSString * const kMMGroupHelperUserName = @"MGRoomHelper";   // MiYou 的真实入口 username
@@ -249,16 +250,31 @@ NSString *MMGroupAccountName(void) {
 }
 
 /// 整份 RoomList 表：{ 账号: [username, ...] }
+static void MMGroupStoreRoomTable(NSDictionary *table);   // 前置声明（它在下面才定义）
+
 static NSMutableDictionary<NSString *, NSArray<NSString *> *> *MMGroupRoomTable(void) {
-    id raw = [[NSUserDefaults standardUserDefaults] dictionaryForKey:MMGroupRoomListKey];
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     NSMutableDictionary *table = [NSMutableDictionary dictionary];
+
+    // 新版：{ 账号: { username: YES, ... } }（MiYou 的形状）
+    id raw = [defaults dictionaryForKey:MMGroupRoomListKey];
     if ([raw isKindOfClass:[NSDictionary class]]) {
         for (id key in raw) {
             id value = raw[key];
-            if ([key isKindOfClass:[NSString class]] && [value isKindOfClass:[NSArray class]]) {
+            if (![key isKindOfClass:[NSString class]]) continue;
+            if ([value isKindOfClass:[NSDictionary class]]) {
+                table[key] = [(NSDictionary *)value allKeys];
+            } else if ([value isKindOfClass:[NSArray class]]) {
                 table[key] = value;
             }
         }
+    }
+    // 旧版（本插件早期版本 + 群聊信息页开关写过）：直接是一个数组 → 迁移成当前账号的名单
+    id legacy = [defaults arrayForKey:MMGroupRoomListKey];
+    if ([legacy isKindOfClass:[NSArray class]] && [legacy count] && table.count == 0) {
+        table[MMGroupAccountName()] = legacy;
+        MMGroupLog(@"RoomList 旧格式迁移：%lu 个 → 账号 %@", (unsigned long)[legacy count], MMGroupAccountName());
+        MMGroupStoreRoomTable(table);
     }
     return table;
 }
@@ -267,11 +283,33 @@ static void MMGroupStoreRoomTable(NSDictionary *table) {
     [[NSUserDefaults standardUserDefaults] setObject:(table ?: @{}) forKey:MMGroupRoomListKey];
 }
 
+BOOL MMGroupAutoAllGroups(void) {
+    id value = [[NSUserDefaults standardUserDefaults] objectForKey:MMGroupAutoAllKey];
+    return value ? [value boolValue] : NO;      // 默认关：与 MiYou 一致（名单制）
+}
+
+void MMGroupSetAutoAllGroups(BOOL autoAll) {
+    [[NSUserDefaults standardUserDefaults] setBool:autoAll forKey:MMGroupAutoAllKey];
+}
+
 NSArray<NSString *> *MMGroupRoomList(void) {
     id mine = MMGroupRoomTable()[MMGroupAccountName()];
-    if ([mine isKindOfClass:[NSArray class]]) return [mine copy];               // 兼容旧格式
-    if ([mine isKindOfClass:[NSDictionary class]]) return [(NSDictionary *)mine allKeys];
-    return @[];
+    NSMutableArray<NSString *> *list = [NSMutableArray array];
+    if ([mine isKindOfClass:[NSArray class]]) {
+        [list addObjectsFromArray:mine];
+    } else if ([mine isKindOfClass:[NSDictionary class]]) {
+        [list addObjectsFromArray:[(NSDictionary *)mine allKeys]];
+    }
+    if (MMGroupAutoAllGroups()) {
+        // 打开后：所有群聊都算进密群列表（= 最早那版"群默认折叠"的行为）
+        for (id session in MMGroupAllSessions()) {
+            NSString *userName = MMGroupUserNameOfSession(session);
+            if ([userName hasSuffix:@"@chatroom"] && ![list containsObject:userName]) {
+                [list addObject:userName];
+            }
+        }
+    }
+    return [list copy];
 }
 
 void MMGroupSetRoomList(NSArray<NSString *> *list) {
@@ -291,12 +329,12 @@ void MMGroupSetRoomList(NSArray<NSString *> *list) {
 
 BOOL MMGroupIsInRoomList(NSString *userName) {
     if (![userName isKindOfClass:[NSString class]] || !userName.length) return NO;
-    return [MMGroupStoredList(MMGroupRoomListKey) containsObject:userName];
+    return [MMGroupRoomList() containsObject:userName];      // 与视图层同一个口径
 }
 
 void MMGroupSetInRoomList(NSString *userName, BOOL inList) {
     if (![userName isKindOfClass:[NSString class]] || !userName.length) return;
-    NSMutableArray<NSString *> *list = MMGroupStoredList(MMGroupRoomListKey);
+    NSMutableArray<NSString *> *list = [MMGroupRoomList() mutableCopy];   // 统一走字典格式
     BOOL contains = [list containsObject:userName];
     if (inList && !contains) {
         [list addObject:userName];
@@ -305,12 +343,12 @@ void MMGroupSetInRoomList(NSString *userName, BOOL inList) {
     } else {
         return;
     }
-    MMGroupStoreList(list, MMGroupRoomListKey);
+    MMGroupSetRoomList(list);
     MMGroupLog(@"RoomList %@: %@（共 %lu 个）", inList ? @"加入" : @"移出", userName, (unsigned long)list.count);
 }
 
 void MMGroupClearRoomList(void) {
-    MMGroupStoreList(@[], MMGroupRoomListKey);
+    MMGroupSetRoomList(@[]);
 }
 
 #pragma mark - 入口会话
@@ -432,7 +470,7 @@ NSArray *MMGroupAllGroupSessions(void) {
 NSArray *MMGroupGroupedSessionsFromList(NSArray *allSessions) {
     NSMutableArray *out = [NSMutableArray array];
     if (![allSessions isKindOfClass:[NSArray class]]) return out;
-    NSSet<NSString *> *roomList = [NSSet setWithArray:MMGroupStoredList(MMGroupRoomListKey)];
+    NSSet<NSString *> *roomList = [NSSet setWithArray:MMGroupRoomList()];   // 统一口径（含旧格式迁移）
     if (roomList.count == 0) return out;
     NSMutableSet<NSString *> *seen = [NSMutableSet set];
     for (id session in allSessions) {
@@ -971,7 +1009,11 @@ NSString *MMGroupDiagnostics(void) {
         [out appendFormat:@"isHelperTop: %@  roomIdx: %ld  helperIncoType: %ld\n",
          MMGroupHelperTop() ? @"YES" : @"NO", (long)MMGroupHelperIndex(), (long)MMGroupHelperIncoType()];
         [out appendFormat:@"roomName: %@\n", MMGroupHelperTitle()];
-        [out appendFormat:@"RoomList: %lu 个\n", (unsigned long)MMGroupRoomList().count];
+        id rawRoom = [[NSUserDefaults standardUserDefaults] objectForKey:MMGroupRoomListKey];
+        [out appendFormat:@"RoomList: %lu 个   自动包含所有群聊: %@   存储格式: %@\n",
+         (unsigned long)MMGroupRoomList().count, MMGroupAutoAllGroups() ? @"开" : @"关",
+         [rawRoom isKindOfClass:[NSDictionary class]] ? @"字典(新)" :
+         ([rawRoom isKindOfClass:[NSArray class]] ? @"数组(旧，已自动迁移)" : @"空")];
         [out appendFormat:@"roomReadCount: %u\n", MMGroupRoomReadCount()];
 
         [out appendString:@"\n-- 会话列表钩子 --\n"];
