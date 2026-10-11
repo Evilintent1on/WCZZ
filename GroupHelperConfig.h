@@ -102,16 +102,18 @@ void MMGroupForceReloadSessions(void);
 
 #pragma mark - 视图层过滤（微信列表实际读的是主界面的行缓存）
 
-/// 安装视图层过滤钩子：
-///   -[NewMainFrameViewController logicGetCountForSection:]
-///   -[NewMainFrameViewController logicGetSessionAtIndexPath:]
-///   -[NewMainFrameViewController logicGetCellDataAtIndexPath:]
-/// 这三个方法是你项目 WeChatCompat.h 里已验证存在的，微信列表就是按它们逐行取的；
-/// 只改 GetSessionInfoList 的返回值列表不会变（实测：钩子被调用 13 次、算出 28 个群，界面无变化）。
+/// 安装视图层过滤钩子（两层都装，自动判断哪一层在驱动列表）：
+///   -[NewMainFrameViewController logicGetCountForSection: / logicGetSessionAtIndexPath: / logicGetCellDataAtIndexPath:]
+///   -[MainFrameLogicController getSessionCountForSection: / getSessionInfoAtIndexPath: / getCellDataAtIndexPath:]
+/// 理由（实测）：只改 GetSessionInfoList 的返回值界面不动；VC 的 logicGet* 也从未被调用过。
 BOOL MMGroupInstallViewHooks(void);
 BOOL MMGroupViewHooksInstalled(void);
 /// 诊断用：入口行 cellData 的字段探测结果
 NSString *MMGroupCellDataProbe(void);
+/// 诊断用：视图层报告（每层调用次数、判定出的会话列表 section、显示映射）
+NSString *MMGroupViewLayerReport(void);
+/// Tweak.xm 的 MainFrameCellDataManager 钩子把观察到的调用记进来（诊断用）
+void MMGroupNoteCellDataManagerCall(NSString * _Nullable userName, id _Nullable cellData);
 
 /// 一键诊断文本（设置页可复制）：版本、类/方法是否存在、钩子状态、会话统计。
 NSString *MMGroupDiagnostics(void);

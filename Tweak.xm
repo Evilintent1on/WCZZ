@@ -821,6 +821,7 @@ static BOOL WCZZGroupIsHelperIndexPath(id mainFrame, id indexPath) {
 
 - (id)getCellDataByUsrName:(id)userName {
     id data = %orig;
+    MMGroupNoteCellDataManagerCall(userName, data);   // 记进诊断：微信到底按哪个 username 取 cellData
     if (MMGroupIsHelperSession(userName)) {
         MMGroupLog(@"入口会话 cellData: %@", data ? NSStringFromClass([data class]) : @"nil");
     }

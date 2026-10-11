@@ -544,29 +544,79 @@ void MMGroupForceReloadSessions(void) {
 
 #pragma mark - 视图层过滤（微信列表真正读的那一层）
 
-// 实测：只改 GetSessionInfoList 的返回值，微信界面不动（钩子被调用 13 次、算出 28 个群也没变化），
-// 因为主界面是按 logicGetCountForSection: / logicGetSessionAtIndexPath: / logicGetCellDataAtIndexPath:
-// 逐行取自己缓存的。所以在这一层做「显示映射」。
+// 实测结论：
+//   1) 只改 -[MMNewSessionMgr GetSessionInfoList] 的返回值，界面不动（钩子被调用 12 次、算出 28 个群）；
+//   2) 挂 -[NewMainFrameViewController logicGet*] 之后，诊断显示「显示映射从未生成」
+//      → 说明这一个版本里会话列表不是通过 VC 的 logicGet* 取行的。
+// 微信的 UITableView 数据源其实是 MainFrameLogicController（getSessionCountForSection: /
+// getSessionInfoAtIndexPath: / getCellDataAtIndexPath:）。所以两层都挂，并且自动判断
+// 「行数最多的那个 section」才是会话列表，避免硬编码 section 0。
+
 typedef long long (*MMGroupCountIMP)(id, SEL, long long);
 typedef id (*MMGroupIndexIMP)(id, SEL, id);
 
+// —— NewMainFrameViewController（VC 层）
+static MMGroupCountIMP MMGroupOrigVCCount = NULL;
+static MMGroupIndexIMP MMGroupOrigVCSession = NULL;
+static MMGroupIndexIMP MMGroupOrigVCCellData = NULL;
+// —— MainFrameLogicController（逻辑层，真正的数据源）
 static MMGroupCountIMP MMGroupOrigLogicCount = NULL;
 static MMGroupIndexIMP MMGroupOrigLogicSession = NULL;
 static MMGroupIndexIMP MMGroupOrigLogicCellData = NULL;
 
-static NSArray *MMGroupDisplaySlots = nil;        // 元素：@(原始行号) 或 @"__helper__"
-static id MMGroupDisplayHelperSession = nil;      // 入口行的伪会话
-static id MMGroupDisplayHelperCellData = nil;     // 入口行的 cellData（从真实行克隆后改字段）
-static NSUInteger MMGroupDisplaySourceCount = 0;  // 生成映射时的原始行数
-static NSTimeInterval MMGroupDisplayBuiltAt = 0;
-static BOOL MMGroupBuildingDisplay = NO;
-static NSString *MMGroupCellDataProbeText = nil;
-
 static NSString * const kMMGroupHelperSlot = @"__helper__";
 
-static SEL MMGroupCountSel(void) { return NSSelectorFromString(@"logicGetCountForSection:"); }
-static SEL MMGroupSessionSel(void) { return NSSelectorFromString(@"logicGetSessionAtIndexPath:"); }
-static SEL MMGroupCellDataSel(void) { return NSSelectorFromString(@"logicGetCellDataAtIndexPath:"); }
+// —— 每个 host 一份显示映射缓存（弱引用 host）
+@interface MMGroupDisplayCache : NSObject
+@property (nonatomic, copy) NSArray *slots;          // @(原始行号) 或 @"__helper__"
+@property (nonatomic, assign) NSUInteger sourceCount;
+@property (nonatomic, assign) NSTimeInterval builtAt;
+@property (nonatomic, strong) id helperSession;
+@property (nonatomic, strong) id helperCellData;
+@end
+
+@implementation MMGroupDisplayCache
+@end
+
+static NSMapTable *MMGroupDisplayCaches = nil;
+static BOOL MMGroupBuildingDisplay = NO;
+
+// —— instrumentation（诊断用）
+static NSUInteger MMGroupCountVC = 0, MMGroupSessionVC = 0, MMGroupCellDataVC = 0;
+static NSUInteger MMGroupCountLogic = 0, MMGroupSessionLogic = 0, MMGroupCellDataLogic = 0;
+static NSUInteger MMGroupCellDataMgrCalls = 0;
+static NSString *MMGroupSectionsSeen = nil;
+static NSString *MMGroupTargetSectionText = nil;
+static NSString *MMGroupCellDataMgrSample = nil;
+static NSString *MMGroupCellDataProbeText = nil;
+static long long MMGroupTargetSection = -1;
+
+static SEL MMGroupVCCountSel(void) { return NSSelectorFromString(@"logicGetCountForSection:"); }
+static SEL MMGroupVCSessionSel(void) { return NSSelectorFromString(@"logicGetSessionAtIndexPath:"); }
+static SEL MMGroupVCCellDataSel(void) { return NSSelectorFromString(@"logicGetCellDataAtIndexPath:"); }
+static SEL MMGroupLogicCountSel(void) { return NSSelectorFromString(@"getSessionCountForSection:"); }
+static SEL MMGroupLogicSessionSel(void) { return NSSelectorFromString(@"getSessionInfoAtIndexPath:"); }
+static SEL MMGroupLogicCellDataSel(void) { return NSSelectorFromString(@"getCellDataAtIndexPath:"); }
+
+static NSMutableDictionary<NSNumber *, NSNumber *> *MMGroupSectionCounts = nil;
+
+static void MMGroupNoteSection(long long section, long long count) {
+    @try {
+        if (!MMGroupSectionCounts) MMGroupSectionCounts = [NSMutableDictionary dictionary];
+        MMGroupSectionCounts[@(section)] = @(count);
+        NSMutableString *text = [NSMutableString string];
+        for (NSNumber *key in [MMGroupSectionCounts.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+            if (text.length) [text appendString:@", "];
+            [text appendFormat:@"%@=%@", key, MMGroupSectionCounts[key]];
+        }
+        MMGroupSectionsSeen = [text copy];
+        // 会话列表 = 行数最多的 section（至少 3 行，避免误判小组）
+        if (count >= 3 && count > MMGroupTargetSection) {
+            MMGroupTargetSection = section;
+            MMGroupTargetSectionText = [NSString stringWithFormat:@"section %lld（原始 %lld 行）", section, count];
+        }
+    } @catch (__unused NSException *e) {}
+}
 
 /// 入口行 cellData：从某个真实会话的 cellData 克隆过来，尽量把标题/用户名/未读改成群助手的。
 static void MMGroupPatchHelperCellData(id cellData, unsigned int unread) {
@@ -593,166 +643,283 @@ static void MMGroupPatchHelperCellData(id cellData, unsigned int unread) {
     setValue(@"m_bShowUnReadAsRedDot", @(NO));
 }
 
-static void MMGroupRebuildDisplayMap(id controller) {
-    if (MMGroupBuildingDisplay || !MMGroupOrigLogicCount || !MMGroupOrigLogicSession) return;
-    MMGroupBuildingDisplay = YES;
-    @try {
-        long long n = MMGroupOrigLogicCount(controller, MMGroupCountSel(), 0);
-        if (n <= 0) {
-            MMGroupDisplaySlots = nil;
-            MMGroupDisplayHelperSession = nil;
-            MMGroupDisplayHelperCellData = nil;
-            MMGroupDisplaySourceCount = 0;
-        } else {
-            NSMutableArray *slots = [NSMutableArray arrayWithCapacity:(NSUInteger)n + 1];
-            NSMutableArray *keptRows = [NSMutableArray array];
-            NSMutableArray *grouped = [NSMutableArray array];
-            NSSet<NSString *> *common = [NSSet setWithArray:MMGroupCommonList()];
-            NSSet<NSString *> *manual = [NSSet setWithArray:MMGroupManualList()];
-            NSIndexPath *firstGroupedIndexPath = nil;
-            BOOL helperAlreadyListed = NO;
+static NSMapTable *MMGroupCaches(void) {
+    if (!MMGroupDisplayCaches) {
+        MMGroupDisplayCaches = [NSMapTable weakToStrongObjectsMapTable];
+    }
+    return MMGroupDisplayCaches;
+}
 
-            for (long long i = 0; i < n; i++) {
-                NSIndexPath *indexPath = [NSIndexPath indexPathForRow:i inSection:0];
-                id session = MMGroupOrigLogicSession(controller, MMGroupSessionSel(), indexPath);
-                NSString *userName = MMGroupUserNameOfSession(session);
-                if (MMGroupIsHelperSession(userName)) {
-                    helperAlreadyListed = YES;      // 模型层已经插过入口行了，别重复插
-                    [keptRows addObject:@(i)];
-                    continue;
-                }
-                if (!userName.length) {
-                    [keptRows addObject:@(i)];
-                    continue;
-                }
-                BOOL shouldGroup = MMGroupIsEnabled() &&
-                    ([manual containsObject:userName] ||
-                     (MMGroupIsGroupUserName(userName) && ![common containsObject:userName]));
-                if (shouldGroup) {
-                    [grouped addObject:session];
-                    if (!firstGroupedIndexPath) firstGroupedIndexPath = indexPath;
-                } else {
-                    [keptRows addObject:@(i)];
-                }
-            }
+/// 生成显示映射：用本层的原始 count / session / cellData 访问器枚举会话。
+static MMGroupDisplayCache *MMGroupBuildCache(id host, BOOL logicLayer) {
+    MMGroupCountIMP origCount = logicLayer ? MMGroupOrigLogicCount : MMGroupOrigVCCount;
+    MMGroupIndexIMP origSession = logicLayer ? MMGroupOrigLogicSession : MMGroupOrigVCSession;
+    MMGroupIndexIMP origCellData = logicLayer ? MMGroupOrigLogicCellData : MMGroupOrigVCCellData;
+    SEL countSel = logicLayer ? MMGroupLogicCountSel() : MMGroupVCCountSel();
+    SEL sessionSel = logicLayer ? MMGroupLogicSessionSel() : MMGroupVCSessionSel();
+    SEL cellDataSel = logicLayer ? MMGroupLogicCellDataSel() : MMGroupVCCellDataSel();
 
-            unsigned int unread = 0;
-            for (id session in grouped) unread += MMGroupUnreadOfSession(session);
+    MMGroupDisplayCache *cache = [[MMGroupDisplayCache alloc] init];
+    if (!origCount || !origSession) return cache;
 
-            MMGroupDisplayHelperCellData = nil;
-            if (grouped.count && firstGroupedIndexPath && MMGroupOrigLogicCellData) {
-                id cellData = MMGroupOrigLogicCellData(controller, MMGroupCellDataSel(), firstGroupedIndexPath);
-                if (cellData) {
-                    MMGroupPatchHelperCellData(cellData, unread);
-                    MMGroupDisplayHelperCellData = cellData;
-                }
-            }
-            MMGroupDisplayHelperSession = MMGroupMakeHelperSessionFromGrouped(grouped);
+    long long section = MMGroupTargetSection;
+    if (section < 0) section = 0;
 
-            if (grouped.count && !helperAlreadyListed) {
-                [slots addObject:kMMGroupHelperSlot];
-            }
-            [slots addObjectsFromArray:keptRows];
-            MMGroupDisplaySlots = [slots copy];
-            MMGroupDisplaySourceCount = (NSUInteger)n;
-            MMGroupDisplayBuiltAt = [NSDate timeIntervalSinceReferenceDate];
-            MMGroupLog(@"视图层：原始 %lld 行 → 显示 %lu 行（收起 %lu 个，入口%@）",
-                       n, (unsigned long)slots.count, (unsigned long)grouped.count,
-                       helperAlreadyListed ? @"来自模型层" : (grouped.count ? @"由视图层插入" : @"无"));
+    long long n = origCount(host, countSel, section);
+    cache.sourceCount = (NSUInteger)MAX(n, 0);
+    if (n <= 0) return cache;
+
+    NSMutableArray *slots = [NSMutableArray arrayWithCapacity:(NSUInteger)n + 1];
+    NSMutableArray *keptRows = [NSMutableArray array];
+    NSMutableArray *grouped = [NSMutableArray array];
+    NSSet<NSString *> *common = [NSSet setWithArray:MMGroupCommonList()];
+    NSSet<NSString *> *manual = [NSSet setWithArray:MMGroupManualList()];
+    NSIndexPath *firstGroupedIndexPath = nil;
+    BOOL helperAlreadyListed = NO;
+
+    for (long long i = 0; i < n; i++) {
+        NSIndexPath *indexPath = [NSIndexPath indexPathForRow:i inSection:section];
+        id session = origSession(host, sessionSel, indexPath);
+        NSString *userName = MMGroupUserNameOfSession(session);
+        if (MMGroupIsHelperSession(userName)) {
+            helperAlreadyListed = YES;
+            [keptRows addObject:@(i)];
+            continue;
         }
-    } @catch (NSException *exception) {
-        MMGroupLog(@"视图层映射异常: %@", exception);
-        MMGroupDisplaySlots = nil;
+        if (!userName.length) {
+            [keptRows addObject:@(i)];
+            continue;
+        }
+        BOOL shouldGroup = MMGroupIsEnabled() &&
+            ([manual containsObject:userName] ||
+             (MMGroupIsGroupUserName(userName) && ![common containsObject:userName]));
+        if (shouldGroup) {
+            [grouped addObject:session];
+            if (!firstGroupedIndexPath) firstGroupedIndexPath = indexPath;
+        } else {
+            [keptRows addObject:@(i)];
+        }
     }
-    MMGroupBuildingDisplay = NO;
+
+    unsigned int unread = 0;
+    for (id session in grouped) unread += MMGroupUnreadOfSession(session);
+
+    if (grouped.count && firstGroupedIndexPath && origCellData) {
+        id cellData = origCellData(host, cellDataSel, firstGroupedIndexPath);
+        if (cellData) {
+            MMGroupPatchHelperCellData(cellData, unread);
+            cache.helperCellData = cellData;
+        }
+    }
+    cache.helperSession = MMGroupMakeHelperSessionFromGrouped(grouped);
+    if (grouped.count && !helperAlreadyListed) [slots addObject:kMMGroupHelperSlot];
+    [slots addObjectsFromArray:keptRows];
+    cache.slots = [slots copy];
+    cache.builtAt = [NSDate timeIntervalSinceReferenceDate];
+    MMGroupLog(@"%@：section %.0f 原始 %lld 行 → 显示 %lu 行（收起 %lu 个，入口%@）",
+               logicLayer ? @"逻辑层" : @"VC 层", (double)section, n, (unsigned long)slots.count,
+               (unsigned long)grouped.count,
+               helperAlreadyListed ? @"来自模型层" : (grouped.count ? @"由本层插入" : @"无"));
+    return cache;
 }
 
-/// 取显示映射（按原始行数 + 2 秒新鲜度缓存）
-static NSArray *MMGroupDisplaySlotsFor(id controller) {
-    if (!MMGroupIsEnabled() || !MMGroupOrigLogicCount) return nil;
-    long long n = MMGroupOrigLogicCount(controller, MMGroupCountSel(), 0);
+static MMGroupDisplayCache *MMGroupCacheFor(id host, BOOL logicLayer) {
+    if (!host) return nil;
+    NSMapTable *caches = MMGroupCaches();
+    MMGroupDisplayCache *cache = [caches objectForKey:host];
+    MMGroupCountIMP origCount = logicLayer ? MMGroupOrigLogicCount : MMGroupOrigVCCount;
+    if (!origCount) return cache;
+    SEL countSel = logicLayer ? MMGroupLogicCountSel() : MMGroupVCCountSel();
+    long long n = origCount(host, countSel, MMGroupTargetSection < 0 ? 0 : MMGroupTargetSection);
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    if (!MMGroupDisplaySlots || (NSUInteger)n != MMGroupDisplaySourceCount || now - MMGroupDisplayBuiltAt > 2.0) {
-        MMGroupRebuildDisplayMap(controller);
+    if (!cache || cache.sourceCount != (NSUInteger)MAX(n, 0) || now - cache.builtAt > 3.0) {
+        if (MMGroupBuildingDisplay) return cache;
+        MMGroupBuildingDisplay = YES;
+        @try {
+            cache = MMGroupBuildCache(host, logicLayer);
+            [caches setObject:cache forKey:host];
+        } @catch (NSException *exception) {
+            MMGroupLog(@"显示映射异常: %@", exception);
+        }
+        MMGroupBuildingDisplay = NO;
     }
-    return MMGroupDisplaySlots;
+    return cache;
 }
+
+static id MMGroupMappedRow(id host, id indexPath, BOOL logicLayer, BOOL wantCellData) {
+    if (!MMGroupIsEnabled() || !indexPath) return nil;
+    MMGroupIndexIMP orig = logicLayer ? MMGroupOrigLogicSession : MMGroupOrigVCSession;
+    MMGroupIndexIMP origCellData = logicLayer ? MMGroupOrigLogicCellData : MMGroupOrigVCCellData;
+    MMGroupDisplayCache *cache = MMGroupCacheFor(host, logicLayer);
+    NSInteger section = [indexPath section];
+    NSInteger row = [indexPath row];
+    if (!cache.slots.count || section != MMGroupTargetSection ||
+        row < 0 || row >= (NSInteger)cache.slots.count) {
+        return nil;   // 调用方自己走原实现
+    }
+    id slot = cache.slots[(NSUInteger)row];
+    if ([slot isKindOfClass:[NSString class]] && [slot isEqualToString:kMMGroupHelperSlot]) {
+        return wantCellData ? cache.helperCellData : cache.helperSession;
+    }
+    NSIndexPath *mapped = [NSIndexPath indexPathForRow:[slot integerValue] inSection:section];
+    return wantCellData ? (origCellData ? origCellData(host, logicLayer ? MMGroupLogicCellDataSel() : MMGroupVCCellDataSel(), mapped) : nil)
+                        : (orig ? orig(host, logicLayer ? MMGroupLogicSessionSel() : MMGroupVCSessionSel(), mapped) : nil);
+}
+
+#pragma mark VC 层 hook
+
+static long long MMGroupVCCountHook(id self, SEL _cmd, long long section) {
+    MMGroupCountVC++;
+    long long n = MMGroupOrigVCCount ? MMGroupOrigVCCount(self, _cmd, section) : 0;
+    MMGroupNoteSection(section, n);
+    if (section != MMGroupTargetSection || !MMGroupIsEnabled()) return n;
+    MMGroupDisplayCache *cache = MMGroupCacheFor(self, NO);
+    return cache.slots.count ? (long long)cache.slots.count : n;
+}
+
+static id MMGroupVCSessionHook(id self, SEL _cmd, id indexPath) {
+    MMGroupSessionVC++;
+    id mapped = MMGroupMappedRow(self, indexPath, NO, NO);
+    if (mapped) return mapped;
+    return MMGroupOrigVCSession ? MMGroupOrigVCSession(self, _cmd, indexPath) : nil;
+}
+
+static id MMGroupVCCellDataHook(id self, SEL _cmd, id indexPath) {
+    MMGroupCellDataVC++;
+    id mapped = MMGroupMappedRow(self, indexPath, NO, YES);
+    if (mapped) return mapped;
+    return MMGroupOrigVCCellData ? MMGroupOrigVCCellData(self, _cmd, indexPath) : nil;
+}
+
+#pragma mark 逻辑层 hook（微信 8.0.79 实际的数据源）
 
 static long long MMGroupLogicCountHook(id self, SEL _cmd, long long section) {
+    MMGroupCountLogic++;
     long long n = MMGroupOrigLogicCount ? MMGroupOrigLogicCount(self, _cmd, section) : 0;
-    if (section != 0 || !MMGroupIsEnabled()) return n;
-    NSArray *slots = MMGroupDisplaySlotsFor(self);
-    if (!slots.count) return n;
-    return (long long)slots.count;
+    MMGroupNoteSection(section, n);
+    if (section != MMGroupTargetSection || !MMGroupIsEnabled()) return n;
+    MMGroupDisplayCache *cache = MMGroupCacheFor(self, YES);
+    return cache.slots.count ? (long long)cache.slots.count : n;
 }
 
 static id MMGroupLogicSessionHook(id self, SEL _cmd, id indexPath) {
-    NSArray *slots = MMGroupDisplaySlotsFor(self);
-    if (!slots.count || !MMGroupOrigLogicSession || !indexPath) {
-        return MMGroupOrigLogicSession(self, _cmd, indexPath);
-    }
-    NSInteger section = [indexPath section];
-    NSInteger row = [indexPath row];
-    if (section != 0 || row < 0 || row >= (NSInteger)slots.count) {
-        return MMGroupOrigLogicSession(self, _cmd, indexPath);
-    }
-    id slot = slots[(NSUInteger)row];
-    if ([slot isKindOfClass:[NSString class]] && [slot isEqualToString:kMMGroupHelperSlot]) {
-        return MMGroupDisplayHelperSession;
-    }
-    NSIndexPath *mapped = [NSIndexPath indexPathForRow:[slot integerValue] inSection:0];
-    return MMGroupOrigLogicSession(self, _cmd, mapped);
+    MMGroupSessionLogic++;
+    id mapped = MMGroupMappedRow(self, indexPath, YES, NO);
+    if (mapped) return mapped;
+    return MMGroupOrigLogicSession ? MMGroupOrigLogicSession(self, _cmd, indexPath) : nil;
 }
 
 static id MMGroupLogicCellDataHook(id self, SEL _cmd, id indexPath) {
-    NSArray *slots = MMGroupDisplaySlotsFor(self);
-    if (!slots.count || !MMGroupOrigLogicCellData || !indexPath) {
-        return MMGroupOrigLogicCellData ? MMGroupOrigLogicCellData(self, _cmd, indexPath) : nil;
-    }
-    NSInteger section = [indexPath section];
-    NSInteger row = [indexPath row];
-    if (section != 0 || row < 0 || row >= (NSInteger)slots.count) {
-        return MMGroupOrigLogicCellData(self, _cmd, indexPath);
-    }
-    id slot = slots[(NSUInteger)row];
-    if ([slot isKindOfClass:[NSString class]] && [slot isEqualToString:kMMGroupHelperSlot]) {
-        return MMGroupDisplayHelperCellData;    // 入口行
-    }
-    NSIndexPath *mapped = [NSIndexPath indexPathForRow:[slot integerValue] inSection:0];
-    return MMGroupOrigLogicCellData(self, _cmd, mapped);
+    MMGroupCellDataLogic++;
+    id mapped = MMGroupMappedRow(self, indexPath, YES, YES);
+    if (mapped) return mapped;
+    return MMGroupOrigLogicCellData ? MMGroupOrigLogicCellData(self, _cmd, indexPath) : nil;
 }
 
+#pragma mark 安装
+
 BOOL MMGroupViewHooksInstalled(void) {
-    return MMGroupOrigLogicCount != NULL && MMGroupOrigLogicSession != NULL;
+    return (MMGroupOrigVCCount != NULL && MMGroupOrigVCSession != NULL) ||
+           (MMGroupOrigLogicCount != NULL && MMGroupOrigLogicSession != NULL);
+}
+
+static void MMGroupSwizzle(Class cls, SEL sel, IMP replacement, void **originalSlot) {
+    if (!cls || !sel) return;
+    Method method = class_getInstanceMethod(cls, sel);
+    if (!method) return;
+    if (originalSlot && *originalSlot == NULL) *originalSlot = (void *)method_getImplementation(method);
+    method_setImplementation(method, replacement);
 }
 
 BOOL MMGroupInstallViewHooks(void) {
-    if (MMGroupViewHooksInstalled()) return YES;
-    Class cls = objc_getClass("NewMainFrameViewController");
-    if (!cls) return NO;
-    Method countMethod = class_getInstanceMethod(cls, MMGroupCountSel());
-    Method sessionMethod = class_getInstanceMethod(cls, MMGroupSessionSel());
-    if (!countMethod || !sessionMethod) {
-        MMGroupLog(@"安装视图层钩子失败：主界面缺少 logicGet 方法");
-        return NO;
+    Class vcClass = objc_getClass("NewMainFrameViewController");
+    if (vcClass) {
+        MMGroupSwizzle(vcClass, MMGroupVCCountSel(), (IMP)MMGroupVCCountHook, (void **)&MMGroupOrigVCCount);
+        MMGroupSwizzle(vcClass, MMGroupVCSessionSel(), (IMP)MMGroupVCSessionHook, (void **)&MMGroupOrigVCSession);
+        MMGroupSwizzle(vcClass, MMGroupVCCellDataSel(), (IMP)MMGroupVCCellDataHook, (void **)&MMGroupOrigVCCellData);
     }
-    MMGroupOrigLogicCount = (MMGroupCountIMP)method_getImplementation(countMethod);
-    MMGroupOrigLogicSession = (MMGroupIndexIMP)method_getImplementation(sessionMethod);
-    method_setImplementation(countMethod, (IMP)MMGroupLogicCountHook);
-    method_setImplementation(sessionMethod, (IMP)MMGroupLogicSessionHook);
+    Class logicClass = objc_getClass("MainFrameLogicController");
+    if (logicClass) {
+        MMGroupSwizzle(logicClass, MMGroupLogicCountSel(), (IMP)MMGroupLogicCountHook, (void **)&MMGroupOrigLogicCount);
+        MMGroupSwizzle(logicClass, MMGroupLogicSessionSel(), (IMP)MMGroupLogicSessionHook, (void **)&MMGroupOrigLogicSession);
+        MMGroupSwizzle(logicClass, MMGroupLogicCellDataSel(), (IMP)MMGroupLogicCellDataHook, (void **)&MMGroupOrigLogicCellData);
+    }
+    MMGroupLog(@"视图层钩子：VC(count:%@ session:%@ cellData:%@) 逻辑层(count:%@ session:%@ cellData:%@)",
+               MMGroupOrigVCCount ? @"✓" : @"✗", MMGroupOrigVCSession ? @"✓" : @"✗", MMGroupOrigVCCellData ? @"✓" : @"✗",
+               MMGroupOrigLogicCount ? @"✓" : @"✗", MMGroupOrigLogicSession ? @"✓" : @"✗", MMGroupOrigLogicCellData ? @"✓" : @"✗");
+    return MMGroupViewHooksInstalled();
+}
 
-    Method cellDataMethod = class_getInstanceMethod(cls, MMGroupCellDataSel());
-    if (cellDataMethod) {
-        MMGroupOrigLogicCellData = (MMGroupIndexIMP)method_getImplementation(cellDataMethod);
-        method_setImplementation(cellDataMethod, (IMP)MMGroupLogicCellDataHook);
-    }
-    MMGroupLog(@"已在 NewMainFrameViewController 安装视图层过滤钩子（cellData 钩子 %@）",
-               cellDataMethod ? @"已装" : @"缺失");
-    return YES;
+void MMGroupNoteCellDataManagerCall(NSString *userName, id cellData) {
+    MMGroupCellDataMgrCalls++;
+    @try {
+        MMGroupCellDataMgrSample = [NSString stringWithFormat:@"userName=%@ 返回=%@",
+                                    userName ?: @"(nil)",
+                                    cellData ? NSStringFromClass([cellData class]) : @"nil"];
+    } @catch (__unused NSException *e) {}
 }
 
 NSString *MMGroupCellDataProbe(void) {
     return MMGroupCellDataProbeText ?: @"(还没有取过入口行 cellData)";
+}
+
+/// 诊断用：列出某个类（含父类）里和会话相关的真实方法名，用来确定该挂哪一层。
+static NSString *MMGroupSelectorDump(NSString *className) {
+    NSMutableString *out = [NSMutableString string];
+    @try {
+        Class cls = objc_getClass(className.UTF8String);
+        if (!cls) return [NSString stringWithFormat:@"%@: 类不存在\n", className];
+        NSArray<NSString *> *keywords = @[@"session", @"Session", @"resort", @"normal",
+                                          @"rebuild", @"fold", @"Fold", @"list", @"List"];
+        NSMutableSet<NSString *> *names = [NSMutableSet set];
+        Class walk = cls;
+        int guard = 0;
+        while (walk && walk != [NSObject class] && guard++ < 6) {
+            unsigned int count = 0;
+            Method *methods = class_copyMethodList(walk, &count);
+            if (methods) {
+                for (unsigned int i = 0; i < count; i++) {
+                    NSString *name = NSStringFromSelector(method_getName(methods[i]));
+                    for (NSString *keyword in keywords) {
+                        if ([name containsString:keyword]) { [names addObject:name]; break; }
+                    }
+                }
+                free(methods);
+            }
+            walk = class_getSuperclass(walk);
+        }
+        NSArray<NSString *> *sorted = [[names allObjects] sortedArrayUsingSelector:@selector(compare:)];
+        [out appendFormat:@"%@: %lu 个相关方法\n", className, (unsigned long)sorted.count];
+        NSUInteger shown = MIN((NSUInteger)60, sorted.count);
+        for (NSUInteger i = 0; i < shown; i++) {
+            [out appendFormat:@"   %@\n", sorted[i]];
+        }
+        if (sorted.count > shown) [out appendFormat:@"   ...（还有 %lu 个）\n", (unsigned long)(sorted.count - shown)];
+    } @catch (NSException *exception) {
+        [out appendFormat:@"%@: 枚举异常 %@\n", className, exception];
+    }
+    return [out copy];
+}
+
+NSString *MMGroupViewLayerReport(void) {
+    NSMutableString *out = [NSMutableString string];
+    [out appendFormat:@"VC 层 logicGet* 调用: count %lu / session %lu / cellData %lu\n",
+     (unsigned long)MMGroupCountVC, (unsigned long)MMGroupSessionVC, (unsigned long)MMGroupCellDataVC];
+    [out appendFormat:@"逻辑层 get* 调用: count %lu / session %lu / cellData %lu\n",
+     (unsigned long)MMGroupCountLogic, (unsigned long)MMGroupSessionLogic, (unsigned long)MMGroupCellDataLogic];
+    [out appendFormat:@"CellDataManager 调用: %lu%@\n", (unsigned long)MMGroupCellDataMgrCalls,
+     MMGroupCellDataMgrSample.length ? [@"  最近一次: " stringByAppendingString:MMGroupCellDataMgrSample] : @""];
+    [out appendFormat:@"见过的 section/行数: %@\n", MMGroupSectionsSeen.length ? MMGroupSectionsSeen : @"(还没调用过)"];
+    [out appendFormat:@"判定为会话列表: %@\n", MMGroupTargetSectionText ?: @"(未判定)"];
+    MMGroupDisplayCache *cache = MMGroupDisplayCaches ? [MMGroupDisplayCaches objectForKey:MMGroupMainFrameController()] : nil;
+    if (cache.slots.count) {
+        [out appendFormat:@"显示映射: 原始 %lu 行 → 显示 %lu 行\n",
+         (unsigned long)cache.sourceCount, (unsigned long)cache.slots.count];
+    } else {
+        [out appendString:@"显示映射: 未生成\n"];
+    }
+    [out appendFormat:@"入口行 cellData 探测:\n%@", MMGroupCellDataProbe()];
+    return [out copy];
 }
 
 #pragma mark - 诊断
@@ -844,14 +1011,14 @@ NSString *MMGroupDiagnostics(void) {
     }
 
     [out appendString:@"\n-- 视图层（微信列表真正读的一层）--\n"];
-    [out appendFormat:@"logicGet* 钩子: %@\n", MMGroupViewHooksInstalled() ? @"已安装" : @"未安装"];
-    if (MMGroupDisplaySlots.count) {
-        [out appendFormat:@"显示映射: 原始 %lu 行 → 显示 %lu 行\n",
-         (unsigned long)MMGroupDisplaySourceCount, (unsigned long)MMGroupDisplaySlots.count];
-    } else {
-        [out appendString:@"显示映射: 还没有生成（没进过会话列表？）\n"];
-    }
-    [out appendFormat:@"入口行 cellData 探测:\n%@\n", MMGroupCellDataProbe()];
+    [out appendFormat:@"视图层钩子: %@\n", MMGroupViewHooksInstalled() ? @"已安装" : @"未安装"];
+    [out appendString:MMGroupViewLayerReport()];
+    [out appendString:@"\n"];
+
+    [out appendString:@"\n-- 真实方法名（用来确定该挂哪一层）--\n"];
+    [out appendString:MMGroupSelectorDump(@"MainFrameLogicController")];
+    [out appendString:MMGroupSelectorDump(@"MMNewSessionMgr")];
+    [out appendString:MMGroupSelectorDump(@"MainFrameCellDataManager")];
 
     [out appendFormat:@"\n时间: %@", [NSDate date]];
     } @catch (NSException *exception) {
