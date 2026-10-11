@@ -149,11 +149,8 @@
 }
 
 - (void)onDone {
-    if (self.mode == GroupHelperPickerModeRoomList) {
-        MMGroupSetRoomList(self.selected.array);
-    } else {
-        MMGroupSetManualList(self.selected.array);
-    }
+    MMGroupSetRoomList(self.selected.array);   // MiYou：只有 RoomList 一份名单
+    MMGroupForceReloadSessions();
     if (self.completion) {
         self.completion(self.selected.count);
     }

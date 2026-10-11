@@ -733,8 +733,6 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
 #pragma mark - Group helper hooks (群助手：会话列表入口 + 自有列表页)
 
 static const void *WCZZGroupCommonSwitchKey = &WCZZGroupCommonSwitchKey;
-static const void *WCZZGroupTitleKey = &WCZZGroupTitleKey;
-static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
 
 // 从会话 cell 反查 username（不同版本字段名不同，逐个试）。
 static NSString *WCZZGroupUserNameOfCell(id cell) {
@@ -760,6 +758,10 @@ static id WCZZGroupSessionAtIndexPath(id mainFrame, id indexPath) {
 static BOOL WCZZGroupIsHelperIndexPath(id mainFrame, id indexPath) {
     return MMGroupIsHelperSession(MMGroupUserNameOfSession(WCZZGroupSessionAtIndexPath(mainFrame, indexPath)));
 }
+
+// associated object keys（标题 / 左侧按钮，进入组内视图时保存原值）
+static const void *WCZZGroupTitleKey = &WCZZGroupTitleKey;
+static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
 
 %group WCZZGroupHooks
 
@@ -968,7 +970,7 @@ static BOOL WCZZGroupIsHelperIndexPath(id mainFrame, id indexPath) {
 %new
 - (void)wczzGroupCommonChanged:(UISwitch *)sender {
     NSString *userName = WCZZValue(WCZZValue(self, @"m_chatRoomContact"), @"m_nsUserName");
-    if (![userName hasSuffix:@"@chatroom"]) return;
+    if (![userName hasSuffix:@"@chatroom"]) return;   // 只对群聊显示
     MMGroupSetInRoomList(userName, sender.isOn);   // 加入/移出 RoomList
     MMGroupForceReloadSessions();
 }
