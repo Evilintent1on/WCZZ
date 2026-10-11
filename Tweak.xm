@@ -6,7 +6,6 @@
 #import "GroupHelperConfig.h"
 #import "GroupHelperCompat.h"
 #import "GroupHelperSessionPickerController.h"
-#import "GroupHelperListController.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 
@@ -128,7 +127,7 @@ static id WCZZValue(id obj, NSString *key) {
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
-    return section == 2 ? 6 : 1;
+    return section == 2 ? 8 : 1;
 }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section { return 28.0; }
 - (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section { return section == 0 ? 8.0 : 0.01; }
@@ -154,28 +153,36 @@ static id WCZZValue(id obj, NSString *key) {
     } else if (ip.section == 1) {
         c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryNone;
     } else if (ip.section == 2 && ip.row == 0) {
-        c.textLabel.text=@"启用群助手"; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        c.textLabel.text=@"群助手"; c.selectionStyle=UITableViewCellSelectionStyleNone;
         c.detailTextLabel.text=MMGroupRuntimeStatus(); c.detailTextLabel.font=[UIFont systemFontOfSize:12.0];
         UISwitch *sw=[UISwitch new]; sw.tag=200; sw.on=MMGroupIsEnabled(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
         sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else if (ip.section == 2 && ip.row == 1) {
-        c.textLabel.text=@"分组名称"; c.detailTextLabel.text=MMGroupHelperTitle();
-        c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+        c.textLabel.text=@"显示群助手入口"; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        UISwitch *sw=[UISwitch new]; sw.tag=201; sw.on=MMGroupShowHelper(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
+        sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
+        [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else if (ip.section == 2 && ip.row == 2) {
-        c.textLabel.text=@"常用群（不进分组）";
-        c.detailTextLabel.text=[NSString stringWithFormat:@"%lu 个", (unsigned long)[MMGroupCommonList() count]];
-        c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+        c.textLabel.text=@"入口置顶"; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        UISwitch *sw=[UISwitch new]; sw.tag=202; sw.on=MMGroupHelperTop(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
+        sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
+        [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else if (ip.section == 2 && ip.row == 3) {
-        c.textLabel.text=@"立即刷新会话列表"; c.detailTextLabel.text=MMGroupSessionListHookInstalled()?@"已挂钩子":@"**钩子未安装**";
+        c.textLabel.text=@"未读样式"; c.detailTextLabel.text=(MMGroupHelperIncoType()==1)?@"红点":@"数字";
         c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     } else if (ip.section == 2 && ip.row == 4) {
-        c.textLabel.text=@"诊断信息（可复制）";
-        c.detailTextLabel.text=MMGroupSessionListHookClassName() ?: @"";
+        c.textLabel.text=@"入口名称"; c.detailTextLabel.text=MMGroupHelperTitle();
         c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+    } else if (ip.section == 2 && ip.row == 5) {
+        c.textLabel.text=@"组内会话（RoomList）";
+        c.detailTextLabel.text=[NSString stringWithFormat:@"%lu 个", (unsigned long)[MMGroupRoomList() count]];
+        c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+    } else if (ip.section == 2 && ip.row == 6) {
+        c.textLabel.text=@"诊断信息（可复制）"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     } else if (ip.section == 2) {
         c.textLabel.text=@"调试日志"; c.selectionStyle=UITableViewCellSelectionStyleNone;
-        UISwitch *sw=[UISwitch new]; sw.tag=201; sw.on=MMGroupDebugEnabled(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
+        UISwitch *sw=[UISwitch new]; sw.tag=203; sw.on=MMGroupDebugEnabled(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
         sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     }
@@ -184,13 +191,19 @@ static id WCZZValue(id obj, NSString *key) {
 - (void)wczzMain:(UISwitch *)sw {
     if (sw.tag == 100) WCZZSetBool(WCZZRedDetailKey, sw.on);
     if (sw.tag == 200) { MMGroupSetEnabled(sw.on); [self.tableView reloadData]; }
-    if (sw.tag == 201) MMGroupSetDebugEnabled(sw.on);
+    if (sw.tag == 201) { MMGroupSetShowHelper(sw.on); [self.tableView reloadData]; }
+    if (sw.tag == 202) { MMGroupSetHelperTop(sw.on); [self.tableView reloadData]; }
+    if (sw.tag == 203) MMGroupSetDebugEnabled(sw.on);
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
     if (ip.section == 1) [self.navigationController pushViewController:[MessageMenuSettingsController new] animated:YES];
-    if (ip.section == 2 && ip.row == 1) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"分组名称"
+    if (ip.section == 2 && ip.row == 3) {
+        MMGroupSetHelperIncoType(MMGroupHelperIncoType() == 1 ? 0 : 1);
+        [tv reloadData];
+    }
+    if (ip.section == 2 && ip.row == 4) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"入口名称"
                                                                        message:nil
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
@@ -204,25 +217,16 @@ static id WCZZValue(id obj, NSString *key) {
         }]];
         [self presentViewController:alert animated:YES completion:nil];
     }
-    if (ip.section == 2 && ip.row == 2) {
+    if (ip.section == 2 && ip.row == 5) {
         GroupHelperSessionPickerController *picker =
-            [[GroupHelperSessionPickerController alloc] initWithMode:GroupHelperPickerModeCommon
+            [[GroupHelperSessionPickerController alloc] initWithMode:GroupHelperPickerModeRoomList
                                                           completion:^(NSUInteger count) {
             (void)count;
             [tv reloadData];
         }];
         [self.navigationController pushViewController:picker animated:YES];
     }
-    if (ip.section == 2 && ip.row == 3) {
-        MMGroupForceReloadSessions();
-        [tv reloadData];
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"已请求刷新"
-                                                                       message:@"如果列表没变化，请打开「诊断信息」把内容发我。"
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
-    }
-    if (ip.section == 2 && ip.row == 4) {
+    if (ip.section == 2 && ip.row == 6) {
         NSString *report = nil;
         @try { report = MMGroupDiagnostics(); } @catch (NSException *exception) { report = nil; }
         if (![report isKindOfClass:[NSString class]] || !report.length) {
@@ -764,12 +768,38 @@ static BOOL WCZZGroupIsHelperIndexPath(id mainFrame, id indexPath) {
 %hook NewMainFrameViewController
 
 - (void)tableView:(id)tableView didSelectRowAtIndexPath:(id)indexPath {
+    // MiYou：点入口不跳页面，置 inRoomList = YES，会话列表就地显示组内会话
     if (MMGroupIsEnabled() && WCZZGroupIsHelperIndexPath(self, indexPath)) {
-        MMGroupLog(@"点击入口会话，进入列表页");
-        [self.navigationController pushViewController:[[GroupHelperListController alloc] init] animated:YES];
+        MMGroupLog(@"点击入口会话 → inRoomList = YES");
+        [self wczzGroupSetInside:YES];
         return;
     }
     %orig;
+}
+
+%new
+- (void)wczzGroupSetInside:(BOOL)inside {
+    BOOL current = MMGroupIsInsideHelper();
+    if (inside == current) { MMGroupForceReloadSessions(); return; }
+    MMGroupSetInsideHelper(inside);
+    if (inside) {
+        objc_setAssociatedObject(self, WCZZGroupTitleKey, self.navigationItem.title, OBJC_ASSOCIATION_COPY_NONATOMIC);
+        objc_setAssociatedObject(self, WCZZGroupLeftItemKey, self.navigationItem.leftBarButtonItem, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        self.navigationItem.title = MMGroupHelperTitle();
+        self.navigationItem.leftBarButtonItem =
+            [[UIBarButtonItem alloc] initWithTitle:@"返回" style:UIBarButtonItemStylePlain
+                                            target:self action:@selector(wczzGroupExitInside)];
+    } else {
+        NSString *title = objc_getAssociatedObject(self, WCZZGroupTitleKey);
+        self.navigationItem.title = title.length ? title : @"微信";
+        self.navigationItem.leftBarButtonItem = objc_getAssociatedObject(self, WCZZGroupLeftItemKey);
+    }
+    MMGroupForceReloadSessions();
+}
+
+%new
+- (void)wczzGroupExitInside {
+    [self wczzGroupSetInside:NO];
 }
 
 // 每次会话列表出现时，让列表按最新分组重算（安全刷新，不会触发微信重建）
@@ -880,7 +910,7 @@ static BOOL WCZZGroupIsHelperIndexPath(id mainFrame, id indexPath) {
     if (!MMGroupIsEnabled()) return;
 
     NSString *userName = WCZZValue(WCZZValue(self, @"m_chatRoomContact"), @"m_nsUserName");
-    if (!MMGroupIsGroupUserName(userName)) return;
+    if (![userName isKindOfClass:[NSString class]] || !userName.length) return;
 
     UITableView *tableView = nil;
     id tableInfo = WCZZValue(self, @"m_tableViewInfo");
@@ -899,7 +929,7 @@ static BOOL WCZZGroupIsHelperIndexPath(id mainFrame, id indexPath) {
     // 其它入口（左滑菜单 / 设置页）可能改过状态，这里同步一下开关
     for (UIView *sub in header.subviews) {
         if ([sub isKindOfClass:[UISwitch class]]) {
-            ((UISwitch *)sub).on = MMGroupIsCommon(userName);
+            ((UISwitch *)sub).on = MMGroupIsInRoomList(userName);
         }
     }
     if (header && tableView && tableView.tableHeaderView != header) {
@@ -916,12 +946,12 @@ static BOOL WCZZGroupIsHelperIndexPath(id mainFrame, id indexPath) {
     container.backgroundColor = [UIColor clearColor];
 
     UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(16, 0, 220, 52)];
-    label.text = @"设为常用群（不折叠）";
+    label.text = @"加入群助手（收进群助手）";
     label.font = [UIFont systemFontOfSize:16.0];
     [container addSubview:label];
 
     UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectZero];
-    sw.on = MMGroupIsCommon(userName);
+    sw.on = MMGroupIsInRoomList(userName);
     sw.tag = 7001;
     [sw addTarget:self action:@selector(wczzGroupCommonChanged:) forControlEvents:UIControlEventValueChanged];
     sw.translatesAutoresizingMaskIntoConstraints = NO;
@@ -937,7 +967,8 @@ static BOOL WCZZGroupIsHelperIndexPath(id mainFrame, id indexPath) {
 - (void)wczzGroupCommonChanged:(UISwitch *)sender {
     NSString *userName = WCZZValue(WCZZValue(self, @"m_chatRoomContact"), @"m_nsUserName");
     if (!MMGroupIsGroupUserName(userName)) return;
-    MMGroupSetCommon(userName, sender.isOn);   // 会话列表下次刷新时会自动重算分组
+    MMGroupSetInRoomList(userName, sender.isOn);   // 加入/移出 RoomList
+    MMGroupForceReloadSessions();
 }
 
 %new

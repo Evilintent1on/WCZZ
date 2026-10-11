@@ -8,8 +8,8 @@
 #import <UIKit/UIKit.h>
 
 typedef NS_ENUM(NSInteger, GroupHelperPickerMode) {
-    GroupHelperPickerModeCommon = 0,   // 常用群（不折叠）
-    GroupHelperPickerModeManual        // 手动加入分组
+    GroupHelperPickerModeRoomList = 0,  // 组内会话（RoomList）
+    GroupHelperPickerModeManual         // 预留
 };
 
 @interface GroupHelperSessionPickerController : UITableViewController

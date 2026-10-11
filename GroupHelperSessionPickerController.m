@@ -23,7 +23,7 @@
         _mode = mode;
         _completion = [completion copy];
         _selected = [NSMutableOrderedSet orderedSet];
-        self.title = (mode == GroupHelperPickerModeCommon) ? @"常用群（不进分组）" : @"加入分组";
+        self.title = (mode == GroupHelperPickerModeRoomList) ? @"组内会话（RoomList）" : @"加入分组";
     }
     return self;
 }
@@ -59,12 +59,12 @@
 }
 
 - (NSArray<NSString *> *)memberList {
-    return (self.mode == GroupHelperPickerModeCommon) ? MMGroupCommonList() : MMGroupManualList();
+    return MMGroupRoomList();   // MiYou：RoomList 白名单（两种模式都读同一份）
 }
 
 - (void)reloadData {
     // 常用群只能选群聊；手动加入可以选任意会话
-    self.sessions = (self.mode == GroupHelperPickerModeCommon) ? MMGroupAllGroupSessions() : MMGroupAllSessions();
+    self.sessions = (self.mode == GroupHelperPickerModeRoomList) ? MMGroupAllGroupSessions() : MMGroupAllSessions();
     self.filtered = self.sessions;
     [self.selected removeAllObjects];
     for (NSString *userName in [self memberList]) {
@@ -75,7 +75,7 @@
 }
 
 - (void)updatePrompt {
-    NSString *what = (self.mode == GroupHelperPickerModeCommon) ? @"常用" : @"已加入";
+    NSString *what = (self.mode == GroupHelperPickerModeRoomList) ? @"已加入" : @"已加入";
     self.navigationItem.prompt = [NSString stringWithFormat:@"%@ %lu / 共 %lu 个会话",
                                   what, (unsigned long)self.selected.count, (unsigned long)self.sessions.count];
 }
@@ -149,8 +149,8 @@
 }
 
 - (void)onDone {
-    if (self.mode == GroupHelperPickerModeCommon) {
-        MMGroupSetCommonList(self.selected.array);
+    if (self.mode == GroupHelperPickerModeRoomList) {
+        MMGroupSetRoomList(self.selected.array);
     } else {
         MMGroupSetManualList(self.selected.array);
     }
