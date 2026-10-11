@@ -30,6 +30,14 @@
 
 // 群聊信息页：m_chatRoomContact 是当前群，m_tableViewInfo 能取到 table view
 // （MMTableViewInfo -getTableView 已在 WeChatHeaders.h 里声明）。
+
+// MiYou 造入口会话时用的假联系人字段（实测：m_nsUsrName 不是 m_nsUserName）
+@interface CContact : NSObject
+@property (nonatomic, copy) NSString *m_nsNickName;
+@property (nonatomic, copy) NSString *m_nsUsrName;
+@property (nonatomic, assign) BOOL m_isShowRedDot;
+@end
+
 @interface ChatRoomInfoViewController : UIViewController
 - (void)viewDidLoad;
 - (void)viewWillAppear:(BOOL)animated;
@@ -39,7 +47,7 @@
 // 运行时新增方法的声明（实现由 Logos 的 %new 提供），避免 clang 报 method not found。
 @interface ChatRoomInfoViewController (WCZZGroupHelper)
 - (void)wczzGroupInstallCommonSwitch;
-- (void)wczzGroupCommonChanged:(UISwitch *)sender;
+- (void)settingFilterRoom:(UISwitch *)sender;
 - (UIView *)wczzGroupMakeCommonHeader:(NSString *)userName;
 - (UITableView *)wczzGroupFindTableView:(UIView *)root;
 @end

@@ -8,11 +8,11 @@
 #import <UIKit/UIKit.h>
 
 typedef NS_ENUM(NSInteger, GroupHelperPickerMode) {
-    GroupHelperPickerModeRoomList = 0,  // 组内会话（RoomList）
+    GroupHelperPickerModeRoomList = 0,  // 密群列表（RoomList）
     GroupHelperPickerModeManual         // 预留
 };
 
-@interface GroupHelperSessionPickerController : UITableViewController
+@interface GroupHelperSessionPickerController : UIViewController
 
 - (instancetype)initWithMode:(GroupHelperPickerMode)mode
                   completion:(void (^)(NSUInteger count))completion;

@@ -20,6 +20,7 @@
 @interface NewMainFrameViewController (WCZZGroupHelper)
 - (void)wczzGroupSetInside:(BOOL)inside;
 - (void)wczzGroupExitInside;
+@property (nonatomic, assign) BOOL inRoomList;   // MiYou 注入的同名属性
 @end
 
 #pragma mark - Card background (25pt radius)
@@ -180,11 +181,11 @@ static id WCZZValue(id obj, NSString *key) {
         c.textLabel.text=@"未读样式"; c.detailTextLabel.text=(MMGroupHelperIncoType()==1)?@"红点":@"数字";
         c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     } else if (ip.section == 2 && ip.row == 4) {
-        c.textLabel.text=@"入口名称"; c.detailTextLabel.text=MMGroupHelperTitle();
+        c.textLabel.text=@"群助手名称"; c.detailTextLabel.text=MMGroupHelperTitle();
         c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     } else if (ip.section == 2 && ip.row == 5) {
-        c.textLabel.text=@"组内会话（RoomList）";
-        c.detailTextLabel.text=[NSString stringWithFormat:@"%lu 个", (unsigned long)[MMGroupRoomList() count]];
+        c.textLabel.text=@"密群列表";
+        c.detailTextLabel.text=[NSString stringWithFormat:@"已选 %lu 个群", (unsigned long)[MMGroupRoomList() count]];
         c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     } else if (ip.section == 2 && ip.row == 6) {
         c.textLabel.text=@"诊断信息（可复制）"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
@@ -744,14 +745,16 @@ static const void *WCZZGroupCommonSwitchKey = &WCZZGroupCommonSwitchKey;
 
 // 从会话 cell 反查 username（不同版本字段名不同，逐个试）。
 static NSString *WCZZGroupUserNameOfCell(id cell) {
+    // 实测（MiYou -checkTableViewEditingStyle）：cell.m_cellData.m_sessionInfo.m_nsUserName
     if (!cell) return nil;
-    NSString *userName = WCZZValue(cell, @"m_nsUserName");
+    id cellData = WCZZValue(cell, @"m_cellData");
+    id sessionInfo = WCZZValue(cellData, @"m_sessionInfo");
+    NSString *userName = MMGroupUserNameOfSession(sessionInfo);
     if (![userName isKindOfClass:[NSString class]] || !userName.length) {
-        userName = WCZZValue(cell, @"userName");
+        userName = MMGroupUserNameOfSession(cellData);
     }
     if (![userName isKindOfClass:[NSString class]] || !userName.length) {
-        id data = WCZZValue(cell, @"m_cellData") ?: WCZZValue(cell, @"m_data") ?: WCZZValue(cell, @"viewModel");
-        userName = WCZZValue(data, @"m_nsUserName") ?: WCZZValue(data, @"userName");
+        userName = WCZZValue(cell, @"m_nsUserName") ?: WCZZValue(cell, @"userName");
     }
     return [userName isKindOfClass:[NSString class]] ? userName : nil;
 }
@@ -780,31 +783,53 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
 %hook NewMainFrameViewController
 
 - (void)tableView:(id)tableView didSelectRowAtIndexPath:(id)indexPath {
-    // MiYou：点入口不跳页面，置 inRoomList = YES，会话列表就地显示组内会话
-    if (MMGroupIsEnabled() && WCZZGroupIsHelperIndexPath(self, indexPath)) {
-        MMGroupLog(@"点击入口会话 → inRoomList = YES");
-        [self wczzGroupSetInside:YES];
-        return;
+    // 实测复刻 -[NewMainFrameViewController tableView:didSelectRowAtIndexPath:]（IMP 0x4d2ed0）：
+    //   logic = [self valueForKey:@"m_mainFrameLogicController"];
+    //   session = [logic getSessionInfoAtIndexPath:indexPath];
+    //   if (session.m_nsUserName == "MGRoomHelper") { if (RoomList.count) push 一个新的主界面(标题=roomName, inRoomList=YES); return; }
+    if (MMGroupIsEnabled()) {
+        id logic = WCZZValue(self, @"m_mainFrameLogicController");
+        SEL getSessionSel = NSSelectorFromString(@"getSessionInfoAtIndexPath:");
+        if (logic && [logic respondsToSelector:getSessionSel]) {
+            id session = ((id (*)(id, SEL, id))objc_msgSend)(logic, getSessionSel, indexPath);
+            NSString *userName = MMGroupUserNameOfSession(session);
+            if (MMGroupIsHelperSession(userName)) {
+                if ([MMGroupRoomList() count]) {
+                    [self wczzGroupPushRoomHelper];
+                }
+                return;
+            }
+        }
     }
     %orig;
 }
 
 %new
+- (void)wczzGroupPushRoomHelper {
+    // MiYou：push 一个新的 NewMainFrameViewController，靠 inRoomList=YES 显示组内会话
+    Class vcClass = objc_getClass("NewMainFrameViewController");
+    UIViewController *vc = vcClass ? [[vcClass alloc] init] : nil;
+    if (vc) {
+        @try {
+            [vc setValue:MMGroupHelperTitle() forKey:@"m_nsTitle"];
+            vc.hidesBottomBarWhenPushed = YES;
+            [vc setValue:@(YES) forKey:@"inRoomList"];
+        } @catch (__unused NSException *e) {}
+    }
+    MMGroupSetInsideHelper(YES);            // 我们的过滤读这个标志（注入属性名保持一致）
+    if (vc && self.navigationController) {
+        [self.navigationController pushViewController:vc animated:YES];
+    } else {
+        MMGroupForceReloadSessions();
+    }
+}
+
+%new
 - (void)wczzGroupSetInside:(BOOL)inside {
-    BOOL current = MMGroupIsInsideHelper();
-    if (inside == current) { MMGroupForceReloadSessions(); return; }
     MMGroupSetInsideHelper(inside);
     if (inside) {
-        objc_setAssociatedObject(self, WCZZGroupTitleKey, self.navigationItem.title, OBJC_ASSOCIATION_COPY_NONATOMIC);
-        objc_setAssociatedObject(self, WCZZGroupLeftItemKey, self.navigationItem.leftBarButtonItem, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        self.navigationItem.title = MMGroupHelperTitle();
-        self.navigationItem.leftBarButtonItem =
-            [[UIBarButtonItem alloc] initWithTitle:@"返回" style:UIBarButtonItemStylePlain
-                                            target:self action:@selector(wczzGroupExitInside)];
-    } else {
-        NSString *title = objc_getAssociatedObject(self, WCZZGroupTitleKey);
-        self.navigationItem.title = title.length ? title : @"微信";
-        self.navigationItem.leftBarButtonItem = objc_getAssociatedObject(self, WCZZGroupLeftItemKey);
+        @try { [self setValue:MMGroupHelperTitle() forKey:@"m_nsTitle"]; } @catch (__unused NSException *e) {}
+        self.hidesBottomBarWhenPushed = YES;
     }
     MMGroupForceReloadSessions();
 }
@@ -814,10 +839,65 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
     [self wczzGroupSetInside:NO];
 }
 
-// 每次会话列表出现时，让列表按最新分组重算（安全刷新，不会触发微信重建）
+// MiYou 注入在 NewMainFrameViewController 上的属性对（内部代理 GroupTool 状态）
+%new
+- (BOOL)inRoomList {
+    return MMGroupIsInsideHelper();
+}
+
+%new
+- (void)setInRoomList:(BOOL)inRoomList {
+    [self wczzGroupSetInside:inRoomList];
+}
+
+- (void)viewDidLoad {
+    %orig;
+    MMGroupInstallViewHooks();
+    MMGroupForceReloadSessions();
+}
+
+// 实测复刻 -[NewMainFrameViewController viewWillAppear:]（IMP 0x4cfb2c）
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
+    if (!MMGroupIsEnabled()) return;
+    if ([self inRoomList] || MMGroupIsInsideHelper()) {
+        @try { [self setValue:MMGroupHelperTitle() forKey:@"m_nsTitle"]; } @catch (__unused NSException *e) {}
+        self.hidesBottomBarWhenPushed = YES;
+    }
+    MMGroupForceReloadSessions();
+}
+
+// MiYou：标题由 m_nsTitle 决定，inRoomList 时显示 roomName
+- (id)m_nsTitle {
+    id title = %orig;
+    if (MMGroupIsInsideHelper()) return MMGroupHelperTitle();
+    return title;
+}
+
+// 实测复刻 -[NewMainFrameViewController viewDidPop:]（IMP 0x4cf054）
+- (void)viewDidPop:(id)sender {
+    %orig;
+    if (!MMGroupIsEnabled()) return;
+    self.hidesBottomBarWhenPushed = YES;
+    MMGroupSetInsideHelper(NO);
+    MMGroupForceReloadSessions();
+}
+
+- (void)mmSearchBarTextDidChange:(id)text {
+    %orig;
     if (MMGroupIsEnabled()) MMGroupForceReloadSessions();
+}
+
+- (BOOL)shouldMiniTaskGestureBegin {
+    return %orig;
+}
+
+- (void)checkAndUpdateLeftNavBarItemForMiniTaskEntry {
+    %orig;
+}
+
+- (void)notifyMiniTaskEntryWhenViewWillDisappear {
+    %orig;
 }
 
 // 入口会话不许删、不许侧滑（MiYou 同样拦了这些）
@@ -836,8 +916,15 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
     return %orig;
 }
 
-// 老版本微信有这个方法（8.0.79 已挪走），留着做兼容占位
+- (id)tableView:(id)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(id)indexPath {
+    if (MMGroupIsEnabled() && WCZZGroupIsHelperIndexPath(self, indexPath)) return nil;
+    return %orig;
+}
+
+// MiYou：deleteSessionAtIndex: 里拦掉入口行
 - (void)deleteSessionAtIndex:(long long)index {
+    NSIndexPath *indexPath = [NSIndexPath indexPathForRow:index inSection:0];
+    if (MMGroupIsEnabled() && WCZZGroupIsHelperIndexPath(self, indexPath)) return;
     %orig;
 }
 
@@ -854,6 +941,11 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
 - (void)onCommitEditingWithStyle:(long long)style tableView:(id)tableView {
     if (MMGroupIsEnabled() && MMGroupIsHelperSession(WCZZGroupUserNameOfCell(self))) return;
     %orig;
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(id)gesture {
+    if (MMGroupIsEnabled() && MMGroupIsHelperSession(WCZZGroupUserNameOfCell(self))) return NO;
+    return %orig;
 }
 
 %end
@@ -894,6 +986,28 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
 
 - (BOOL)needShowUnreadCountOnSession {
     return %orig;
+}
+
+%end
+
+// MiYou 在 MMNewSessionMgr 上还挂了这三个（GroupTool.isOpenRoomEnable 分支）
+%hook MMNewSessionMgr
+
+- (long long)GetTotalUnreadCount {
+    long long total = %orig;
+    MMGroupLog(@"GetTotalUnreadCount = %lld", total);
+    return total;
+}
+
+- (long long)GetTotalUnreadCountForAppIcon {
+    long long total = %orig;
+    MMGroupLog(@"GetTotalUnreadCountForAppIcon = %lld", total);
+    return total;
+}
+
+// 老版本微信有这个；入口行不允许被删除
+- (void)DeleteSessionAtIndex:(long long)index {
+    %orig;
 }
 
 %end
@@ -965,7 +1079,7 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
     UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectZero];
     sw.on = MMGroupIsInRoomList(userName);
     sw.tag = 7001;
-    [sw addTarget:self action:@selector(wczzGroupCommonChanged:) forControlEvents:UIControlEventValueChanged];
+    [sw addTarget:self action:@selector(settingFilterRoom:) forControlEvents:UIControlEventValueChanged];
     sw.translatesAutoresizingMaskIntoConstraints = NO;
     [container addSubview:sw];
     [NSLayoutConstraint activateConstraints:@[
@@ -976,7 +1090,7 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
 }
 
 %new
-- (void)wczzGroupCommonChanged:(UISwitch *)sender {
+- (void)settingFilterRoom:(UISwitch *)sender {
     NSString *userName = WCZZValue(WCZZValue(self, @"m_chatRoomContact"), @"m_nsUserName");
     if (![userName hasSuffix:@"@chatroom"]) return;   // 只对群聊显示
     MMGroupSetInRoomList(userName, sender.isOn);   // 加入/移出 RoomList

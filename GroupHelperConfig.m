@@ -19,7 +19,7 @@ NSString * const MMGroupRoomListKey   = @"wczz.group.roomList";
 NSString * const MMGroupTitleKey      = @"wczz.group.title";
 NSString * const MMGroupDebugKey      = @"wczz.group.debug";
 
-static NSString * const kMMGroupHelperUserName = @"wczz_group_helper";
+static NSString * const kMMGroupHelperUserName = @"MGRoomHelper";   // MiYou 的真实入口 username
 static NSString * const kMMGroupHelperSlot = @"__helper__";
 
 /// inRoomList（运行时状态，对应 MiYou 注入到 NewMainFrameViewController 的同名属性）
@@ -225,8 +225,53 @@ void MMGroupSetHelperIncoType(NSInteger type) {
 
 #pragma mark - RoomList（白名单）
 
+/// 当前登录账号（MiYou 的 RoomList 是按账号分别存的：mHideRoomList[自己的username]）
+NSString *MMGroupAccountName(void) {
+    // MiYou 用 +[SettingUtil getCurUsrName] 取当前账号（实测 GetSessionInfoList trace）
+    Class settingUtil = objc_getClass("SettingUtil");
+    SEL getCurSel = NSSelectorFromString(@"getCurUsrName");
+    if (settingUtil && [settingUtil respondsToSelector:getCurSel]) {
+        id name = ((id (*)(id, SEL))objc_msgSend)(settingUtil, getCurSel);
+        if ([name isKindOfClass:[NSString class]] && [name length]) return name;
+    }
+    Class centerClass = objc_getClass("MMServiceCenter");
+    Class contactMgrClass = objc_getClass("CContactMgr");
+    if (!centerClass || !contactMgrClass) return @"default";
+    SEL defaultCenterSel = NSSelectorFromString(@"defaultCenter");
+    SEL getServiceSel = NSSelectorFromString(@"getService:");
+    SEL getSelfSel = NSSelectorFromString(@"getSelfContact");
+    id center = ((id (*)(id, SEL))objc_msgSend)(centerClass, defaultCenterSel);
+    id contactMgr = ((id (*)(id, SEL, id))objc_msgSend)(center, getServiceSel, contactMgrClass);
+    if (![contactMgr respondsToSelector:getSelfSel]) return @"default";
+    id selfContact = ((id (*)(id, SEL))objc_msgSend)(contactMgr, getSelfSel);
+    NSString *userName = MMGroupUserNameOfSession(selfContact);
+    return userName.length ? userName : @"default";
+}
+
+/// 整份 RoomList 表：{ 账号: [username, ...] }
+static NSMutableDictionary<NSString *, NSArray<NSString *> *> *MMGroupRoomTable(void) {
+    id raw = [[NSUserDefaults standardUserDefaults] dictionaryForKey:MMGroupRoomListKey];
+    NSMutableDictionary *table = [NSMutableDictionary dictionary];
+    if ([raw isKindOfClass:[NSDictionary class]]) {
+        for (id key in raw) {
+            id value = raw[key];
+            if ([key isKindOfClass:[NSString class]] && [value isKindOfClass:[NSArray class]]) {
+                table[key] = value;
+            }
+        }
+    }
+    return table;
+}
+
+static void MMGroupStoreRoomTable(NSDictionary *table) {
+    [[NSUserDefaults standardUserDefaults] setObject:(table ?: @{}) forKey:MMGroupRoomListKey];
+}
+
 NSArray<NSString *> *MMGroupRoomList(void) {
-    return [MMGroupStoredList(MMGroupRoomListKey) copy];
+    id mine = MMGroupRoomTable()[MMGroupAccountName()];
+    if ([mine isKindOfClass:[NSArray class]]) return [mine copy];               // 兼容旧格式
+    if ([mine isKindOfClass:[NSDictionary class]]) return [(NSDictionary *)mine allKeys];
+    return @[];
 }
 
 void MMGroupSetRoomList(NSArray<NSString *> *list) {
@@ -236,7 +281,12 @@ void MMGroupSetRoomList(NSArray<NSString *> *list) {
             [clean addObject:item];
         }
     }
-    MMGroupStoreList(clean, MMGroupRoomListKey);
+    NSMutableDictionary *table = MMGroupRoomTable();
+    // MiYou 的内层是字典（username → 值），这里保持同样的形状
+    NSMutableDictionary *inner = [NSMutableDictionary dictionary];
+    for (NSString *userName in clean) inner[userName] = @(YES);
+    table[MMGroupAccountName()] = inner;
+    MMGroupStoreRoomTable(table);
 }
 
 BOOL MMGroupIsInRoomList(NSString *userName) {
@@ -271,7 +321,7 @@ NSString *MMGroupHelperUserName(void) {
 
 NSString *MMGroupHelperTitle(void) {             // roomName
     NSString *title = [[NSUserDefaults standardUserDefaults] stringForKey:MMGroupTitleKey];
-    return title.length ? title : @"群助手";
+    return title.length ? title : @"微信群助手";   // MiYou 的默认标题
 }
 
 void MMGroupSetHelperTitle(NSString *title) {
@@ -301,8 +351,15 @@ unsigned int MMGroupRoomReadCount(void) {
 }
 
 id MMGroupCreateHelperSession(void) {
+    // 实测复刻 +[GroupTool createSessionWithUserName:nickName:showRedDot:readAsRedDot:]（IMP 0x42ac7c）：
+    //   CContact  *contact = [[CContact alloc] init];
+    //   contact.m_nsNickName = nickName; contact.m_nsUsrName = userName; contact.m_isShowRedDot = showRedDot;
+    //   MMSessionInfo *s = [[MMSessionInfo alloc] init];
+    //   s.m_contact = contact; s.m_nsUserName = userName; s.m_bShowUnReadAsRedDot = readAsRedDot;
+    Class contactClass = objc_getClass("CContact");
     Class infoClass = objc_getClass("MMSessionInfo");
-    if (!infoClass) return nil;
+    if (!contactClass || !infoClass) return nil;
+
     NSArray *grouped = MMGroupGroupedSessionsFromList(MMGroupAllSessions());
     if (grouped.count == 0) return nil;
 
@@ -314,26 +371,41 @@ id MMGroupCreateHelperSession(void) {
         if (sortTime > latest) latest = sortTime;
     }
 
-    // MiYou: +[GroupTool createSessionWithUserName:nickName:showRedDot:readAsRedDot:]
-    id info = [[infoClass alloc] init];
-    unsigned int now = (unsigned int)[[NSDate date] timeIntervalSince1970];
-    BOOL readAsRedDot = (MMGroupHelperIncoType() == 1);
-    void (^setValue)(NSString *, id) = ^(NSString *key, id value) {
-        @try { [info setValue:value forKey:key]; } @catch (__unused NSException *e) {}
+    void (^setValue)(id, NSString *, id) = ^(id object, NSString *key, id value) {
+        @try { [object setValue:value forKey:key]; } @catch (__unused NSException *e) {}
     };
-    setValue(@"m_nsUserName", MMGroupHelperUserName());
-    setValue(@"m_nsNickName", MMGroupHelperTitle());
-    setValue(@"m_uUnReadCount", @(unread));
-    setValue(@"m_bShowUnReadAsRedDot", @(readAsRedDot));
-    setValue(@"sortTime", @(MAX(latest, now)));
-    setValue(@"m_uTopTime", @(now));
-    setValue(@"m_uUnTopTime", @(0));
-    MMGroupLog(@"入口会话: 组内 %lu 个，未读 %u，样式 %@", (unsigned long)grouped.count, unread,
-               readAsRedDot ? @"红点" : @"数字");
+    BOOL showRedDot = (MMGroupHelperIncoType() == 1);   // readAsRedDot
+
+    // 假联系人（入口行的名字靠它的 m_nsNickName 渲染）
+    id contact = [[contactClass alloc] init];
+    setValue(contact, @"m_nsNickName", MMGroupHelperTitle());
+    setValue(contact, @"m_nsUsrName", MMGroupHelperUserName());
+    setValue(contact, @"m_isShowRedDot", @(showRedDot));
+
+    // 合成会话
+    id info = [[infoClass alloc] init];
+    setValue(info, @"m_contact", contact);
+    setValue(info, @"m_nsUserName", MMGroupHelperUserName());
+    setValue(info, @"m_bShowUnReadAsRedDot", @(showRedDot));
+    // 实测（block @0x6231d8）：工厂返回后 MiYou 紧接着做两件事
+    //   [entry setM_msgWrap:[<msgMgr> GetLastMsgFromUsr:...]]      ← 挂一条"最后消息"
+    //   [entry setM_uUnReadCount:[[GroupTool sharedConfig] roomReadCount]]
+    id lastMsgWrap = nil;
+    for (id session in grouped) {
+        id wrap = MMGroupValue(session, @"m_msgWrap");
+        if (wrap) { lastMsgWrap = wrap; break; }
+    }
+    if (lastMsgWrap) setValue(info, @"m_msgWrap", lastMsgWrap);
+
+    unsigned int now = (unsigned int)[[NSDate date] timeIntervalSince1970];
+    setValue(info, @"m_uUnReadCount", @(unread));   // = roomReadCount
+    setValue(info, @"sortTime", @(MAX(latest, now)));
+    setValue(info, @"m_uTopTime", @(now));
+    setValue(info, @"m_uUnTopTime", @(0));
+    MMGroupLog(@"入口会话: username=%@ 名称=%@ 组内 %lu 个 未读 %u", MMGroupHelperUserName(),
+               MMGroupHelperTitle(), (unsigned long)grouped.count, unread);
     return info;
 }
-
-#pragma mark - 会话与分组
 
 BOOL MMGroupIsBypassingListFilter(void) { return MMGroupBypassListFilter; }
 void MMGroupSetBypassingListFilter(BOOL bypassing) { MMGroupBypassListFilter = bypassing; }

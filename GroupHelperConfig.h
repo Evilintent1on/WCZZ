@@ -55,6 +55,7 @@ void MMGroupLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
 
 #pragma mark - RoomList（白名单）
 
+NSString *MMGroupAccountName(void);          // 当前登录账号（RoomList 按账号分存）
 NSArray<NSString *> *MMGroupRoomList(void);
 void MMGroupSetRoomList(NSArray<NSString *> *list);
 BOOL MMGroupIsInRoomList(NSString * _Nullable userName);
