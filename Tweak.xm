@@ -20,6 +20,7 @@
 @interface NewMainFrameViewController (WCZZGroupHelper)
 - (void)wczzGroupSetInside:(BOOL)inside;
 - (void)wczzGroupExitInside;
+- (void)wczzGroupPushRoomHelper;
 @property (nonatomic, assign) BOOL inRoomList;   // MiYou 注入的同名属性
 @end
 
@@ -912,11 +913,6 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
 }
 
 - (id)tableView:(id)tableView leadingSwipeActionsConfigurationForRowAtIndexPath:(id)indexPath {
-    if (MMGroupIsEnabled() && WCZZGroupIsHelperIndexPath(self, indexPath)) return nil;
-    return %orig;
-}
-
-- (id)tableView:(id)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(id)indexPath {
     if (MMGroupIsEnabled() && WCZZGroupIsHelperIndexPath(self, indexPath)) return nil;
     return %orig;
 }
