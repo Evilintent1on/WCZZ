@@ -37,12 +37,6 @@
 @end
 
 // 运行时新增方法的声明（实现由 Logos 的 %new 提供），避免 clang 报 method not found。
-@class NewMainFrameViewController;
-@interface NewMainFrameViewController (WCZZGroupHelper)
-- (void)wczzGroupSetInside:(BOOL)inside;
-- (void)wczzGroupExitInside;
-@end
-
 @interface ChatRoomInfoViewController (WCZZGroupHelper)
 - (void)wczzGroupInstallCommonSwitch;
 - (void)wczzGroupCommonChanged:(UISwitch *)sender;

@@ -14,6 +14,14 @@
 #import <Foundation/Foundation.h>
 #import <stdarg.h>
 
+// %new 方法的声明（实现在 WCZZGroupHooks 里）。注意：这个类只在这里声明类别 ——
+// 它的完整 @interface 在 WeChatCompat.h 里，GroupHelperConfig.m 那个编译单元看不到它，
+// 所以不能把类别放进 GroupHelperCompat.h（会报 cannot define category for undefined class）。
+@interface NewMainFrameViewController (WCZZGroupHelper)
+- (void)wczzGroupSetInside:(BOOL)inside;
+- (void)wczzGroupExitInside;
+@end
+
 #pragma mark - Card background (25pt radius)
 
 @interface WCZZCardBgView : UIView
