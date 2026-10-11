@@ -50,8 +50,8 @@
                                                       target:self action:@selector(onDone)];
     [self reloadData];
 
-    // 1) 优先用微信原生的多选联系人视图（MiYou 的做法）
-    Class selectViewClass = objc_getClass("ContactSelectView");
+    // 1) 只有开关打开时才内嵌微信原生 ContactSelectView（MiYou 的做法；默认关，避免未验证路径）
+    Class selectViewClass = MMGroupUseNativePicker() ? objc_getClass("ContactSelectView") : Nil;
     if (selectViewClass) {
         @try {
             id selectView = [[selectViewClass alloc] initWithFrame:self.view.bounds];

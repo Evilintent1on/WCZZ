@@ -137,7 +137,7 @@ static id WCZZValue(id obj, NSString *key) {
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
-    return section == 2 ? 9 : 1;
+    return section == 2 ? 10 : 1;
 }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section { return 28.0; }
 - (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section { return section == 0 ? 8.0 : 0.01; }
@@ -196,9 +196,15 @@ static id WCZZValue(id obj, NSString *key) {
         c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     } else if (ip.section == 2 && ip.row == 7) {
         c.textLabel.text=@"诊断信息（可复制）"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
-    } else if (ip.section == 2) {
+    } else if (ip.section == 2 && ip.row == 8) {
         c.textLabel.text=@"调试日志"; c.selectionStyle=UITableViewCellSelectionStyleNone;
         UISwitch *sw=[UISwitch new]; sw.tag=203; sw.on=MMGroupDebugEnabled(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
+        sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
+        [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
+    } else if (ip.section == 2) {
+        c.textLabel.text=@"用微信原生多选界面"; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        c.detailTextLabel.text=MMGroupUseNativePicker()?@"开":@"关（默认，稳定）";
+        UISwitch *sw=[UISwitch new]; sw.tag=205; sw.on=MMGroupUseNativePicker(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
         sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     }
@@ -211,6 +217,7 @@ static id WCZZValue(id obj, NSString *key) {
     if (sw.tag == 202) { MMGroupSetHelperTop(sw.on); [self.tableView reloadData]; }
     if (sw.tag == 203) MMGroupSetDebugEnabled(sw.on);
     if (sw.tag == 204) { MMGroupSetAutoAllGroups(sw.on); MMGroupForceReloadSessions(); [self.tableView reloadData]; }
+    if (sw.tag == 205) { MMGroupSetUseNativePicker(sw.on); [self.tableView reloadData]; }
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
@@ -814,22 +821,25 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
 
 %new
 - (void)wczzGroupPushRoomHelper {
-    // MiYou：push 一个新的 NewMainFrameViewController，靠 inRoomList=YES 显示组内会话
-    Class vcClass = objc_getClass("NewMainFrameViewController");
-    UIViewController *vc = vcClass ? [[vcClass alloc] init] : nil;
-    if (vc) {
-        @try {
-            [vc setValue:MMGroupHelperTitle() forKey:@"m_nsTitle"];
-            vc.hidesBottomBarWhenPushed = YES;
-            [vc setValue:@(YES) forKey:@"inRoomList"];
-        } @catch (__unused NSException *e) {}
-    }
-    MMGroupSetInsideHelper(YES);            // 我们的过滤读这个标志（注入属性名保持一致）
-    if (vc && self.navigationController) {
-        [self.navigationController pushViewController:vc animated:YES];
-    } else {
-        MMGroupForceReloadSessions();
-    }
+    // 注意：MiYou 的原始实现是 [[NewMainFrameViewController alloc] init] 然后 push，
+    // 但裸实例没有微信正常创建时的 logic controller / 表格管理器，也没有返回按钮
+    // → 实测会「返回不出来 + 闪退」。这里改成原地切换（可见行为一致：标题 + 只显示组内会话 + 可返回）。
+    MMGroupSetInsideHelper(YES);
+    @try {
+        [self setValue:MMGroupHelperTitle() forKey:@"m_nsTitle"];
+        [self setValue:@(YES) forKey:@"inRoomList"];        // 保持 MiYou 的属性名一致
+    } @catch (__unused NSException *e) {}
+    // 保存原标题 / 左按钮，换成「微信群助手 + 返回」
+    objc_setAssociatedObject(self, WCZZGroupTitleKey, self.navigationItem.title,
+                             OBJC_ASSOCIATION_COPY_NONATOMIC);
+    objc_setAssociatedObject(self, WCZZGroupLeftItemKey, self.navigationItem.leftBarButtonItem,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    self.navigationItem.title = MMGroupHelperTitle();
+    self.navigationItem.hidesBackButton = NO;
+    self.navigationItem.leftBarButtonItem =
+        [[UIBarButtonItem alloc] initWithTitle:@"返回" style:UIBarButtonItemStylePlain
+                                        target:self action:@selector(wczzGroupExitInside)];
+    MMGroupForceReloadSessions();
 }
 
 %new
@@ -844,7 +854,12 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
 
 %new
 - (void)wczzGroupExitInside {
-    [self wczzGroupSetInside:NO];
+    MMGroupSetInsideHelper(NO);
+    @try { [self setValue:@(NO) forKey:@"inRoomList"]; } @catch (__unused NSException *e) {}
+    NSString *title = objc_getAssociatedObject(self, WCZZGroupTitleKey);
+    self.navigationItem.title = title.length ? title : @"微信";
+    self.navigationItem.leftBarButtonItem = objc_getAssociatedObject(self, WCZZGroupLeftItemKey);
+    MMGroupForceReloadSessions();
 }
 
 // MiYou 注入在 NewMainFrameViewController 上的属性对（内部代理 GroupTool 状态）
@@ -868,9 +883,14 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
     if (!MMGroupIsEnabled()) return;
-    if ([self inRoomList] || MMGroupIsInsideHelper()) {
+    if (MMGroupIsInsideHelper()) {
         @try { [self setValue:MMGroupHelperTitle() forKey:@"m_nsTitle"]; } @catch (__unused NSException *e) {}
-        self.hidesBottomBarWhenPushed = YES;
+        self.navigationItem.title = MMGroupHelperTitle();
+        if (!self.navigationItem.leftBarButtonItem) {
+            self.navigationItem.leftBarButtonItem =
+                [[UIBarButtonItem alloc] initWithTitle:@"返回" style:UIBarButtonItemStylePlain
+                                                target:self action:@selector(wczzGroupExitInside)];
+        }
     }
     MMGroupForceReloadSessions();
 }

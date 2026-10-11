@@ -18,6 +18,7 @@ NSString * const MMGroupIncoTypeKey   = @"wczz.group.incoType";
 NSString * const MMGroupRoomListKey   = @"wczz.group.roomList";
 NSString * const MMGroupTitleKey      = @"wczz.group.title";
 NSString * const MMGroupAutoAllKey    = @"wczz.group.autoAllGroups";
+NSString * const MMGroupNativePickerKey = @"wczz.group.nativePicker";
 NSString * const MMGroupDebugKey      = @"wczz.group.debug";
 
 static NSString * const kMMGroupHelperUserName = @"MGRoomHelper";   // MiYou 的真实入口 username
@@ -275,6 +276,15 @@ BOOL MMGroupAutoAllGroups(void) {
 
 void MMGroupSetAutoAllGroups(BOOL autoAll) {
     [[NSUserDefaults standardUserDefaults] setBool:autoAll forKey:MMGroupAutoAllKey];
+}
+
+BOOL MMGroupUseNativePicker(void) {
+    id value = [[NSUserDefaults standardUserDefaults] objectForKey:MMGroupNativePickerKey];
+    return value ? [value boolValue] : NO;      // 默认关：自建列表已验证稳定
+}
+
+void MMGroupSetUseNativePicker(BOOL useNative) {
+    [[NSUserDefaults standardUserDefaults] setBool:useNative forKey:MMGroupNativePickerKey];
 }
 
 NSArray<NSString *> *MMGroupRoomList(void) {

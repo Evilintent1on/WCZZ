@@ -34,6 +34,7 @@ FOUNDATION_EXPORT NSString * const MMGroupIncoTypeKey;   // wczz.group.incoType 
 FOUNDATION_EXPORT NSString * const MMGroupRoomListKey;   // wczz.group.roomList    RoomList（白名单）
 FOUNDATION_EXPORT NSString * const MMGroupTitleKey;      // wczz.group.title       roomName
 FOUNDATION_EXPORT NSString * const MMGroupAutoAllKey;    // wczz.group.autoAllGroups
+FOUNDATION_EXPORT NSString * const MMGroupNativePickerKey; // wczz.group.nativePicker
 FOUNDATION_EXPORT NSString * const MMGroupDebugKey;      // wczz.group.debug
 
 #pragma mark - 开关（对应 GroupTool 的 isOpen*）
@@ -60,6 +61,9 @@ NSString *MMGroupAccountName(void);          // 当前登录账号（RoomList �
 /// 所有群聊自动加入密群列表（默认关 = MiYou 的名单行为）
 BOOL MMGroupAutoAllGroups(void);
 void MMGroupSetAutoAllGroups(BOOL autoAll);
+/// 密群列表页是否内嵌微信原生 ContactSelectView（默认关：自建列表更稳）
+BOOL MMGroupUseNativePicker(void);
+void MMGroupSetUseNativePicker(BOOL useNative);
 NSArray<NSString *> *MMGroupRoomList(void);
 void MMGroupSetRoomList(NSArray<NSString *> *list);
 BOOL MMGroupIsInRoomList(NSString * _Nullable userName);
