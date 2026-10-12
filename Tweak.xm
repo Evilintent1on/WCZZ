@@ -1306,7 +1306,8 @@ static void WCZZInstallHooksWhenReady(void) {
             WCZZGroupHooksStarted = YES;
             WCZZLog(@"group hooks installed");
             // 钩子装好立刻压几次刷新，避免「进微信要等一会才出现群助手」
-            for (double delay in @[@0.1, @0.6, @1.6]) {
+            for (NSNumber *delayNum in @[@0.1, @0.6, @1.6]) {
+                double delay = [delayNum doubleValue];
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
                                dispatch_get_main_queue(), ^{
                     MMGroupForceReloadSessions();
