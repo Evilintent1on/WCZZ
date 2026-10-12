@@ -8,6 +8,14 @@
 
 // 底栏液态玻璃（WCZZTabBarGlass.xm）
 BOOL WCZZTabBarGlassEnabled(void);
+void WCZZSetTabBarGlassEnabled(BOOL);
+BOOL WCZZGlassDesignEnabled(void);
+void WCZZSetGlassDesignEnabled(BOOL);
+BOOL WCZZGlassTopFixEnabled(void);
+void WCZZSetGlassTopFixEnabled(BOOL);
+BOOL WCZZGlassInputEnabled(void);
+void WCZZSetGlassInputEnabled(BOOL);
+BOOL WCZZTabBarGlassEnabled(void);
 void WCZZSetTabBarGlassEnabled(BOOL enabled);
 
 
@@ -129,6 +137,7 @@ static id WCZZValue(id obj, NSString *key) {
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
+    if (section == 2) return 4;
     return 1;
 }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section { return 28.0; }
@@ -155,17 +164,28 @@ static id WCZZValue(id obj, NSString *key) {
     } else if (ip.section == 1) {
         c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryNone;
     } else if (ip.section == 2) {
-        c.textLabel.text=@"底栏液态玻璃"; c.selectionStyle=UITableViewCellSelectionStyleNone;
-        c.detailTextLabel.text=WCZZTabBarGlassEnabled()?@"开":@"关";
-        UISwitch *sw=[UISwitch new]; sw.tag=300; sw.on=WCZZTabBarGlassEnabled(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
+        c.selectionStyle=UITableViewCellSelectionStyleNone;
+        UISwitch *sw=[UISwitch new]; [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
         sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
+        if (ip.row == 0) {
+            c.textLabel.text=@"底栏液态玻璃"; sw.tag=300; sw.on=WCZZTabBarGlassEnabled();
+        } else if (ip.row == 1) {
+            c.textLabel.text=@"全局设计系统"; sw.tag=301; sw.on=WCZZGlassDesignEnabled();
+        } else if (ip.row == 2) {
+            c.textLabel.text=@"顶部布局校正"; sw.tag=302; sw.on=WCZZGlassTopFixEnabled();
+        } else {
+            c.textLabel.text=@"输入框液态"; sw.tag=303; sw.on=WCZZGlassInputEnabled();
+        }
     }
     return c;
 }
 - (void)wczzMain:(UISwitch *)sw {
     if (sw.tag == 100) WCZZSetBool(WCZZRedDetailKey, sw.on);
     if (sw.tag == 300) { WCZZSetTabBarGlassEnabled(sw.on); [self.tableView reloadData]; }
+    if (sw.tag == 301) { WCZZSetGlassDesignEnabled(sw.on); [self.tableView reloadData]; }
+    if (sw.tag == 302) { WCZZSetGlassTopFixEnabled(sw.on); [self.tableView reloadData]; }
+    if (sw.tag == 303) { WCZZSetGlassInputEnabled(sw.on); [self.tableView reloadData]; }
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];

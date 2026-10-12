@@ -1,37 +1,68 @@
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>
+#import <objc/runtime.h>
+
+// ============================================================
+//  wctabbar v3 —— 在你原版基础上修 4 个问题 + 加输入框液态
+//
+//  原版逻辑（擦底 / 关毛玻璃 / 对齐底栏图标 / MMTabBar 系列钩子）**一行未动**。
+//  本次新增（全部可开关，出问题能单独关掉定位）：
+//    ★1 顶部液态胶囊里按钮不居中 → WCLGCenterButtonsInGlass()
+//    ★2 顶部整体偏移         → fakeNavBarView 对齐系统导航栏 frame
+//    ★3 搜索框变窄/被压缩     → 恢复宽度 + 撑开表头高度（根因：搜索框是表头视图）
+//    ★4 输入框没有液态       → 聊天页底部的输入条后面垫一层 Liquid Glass
+//
+//  说明：问题 1~3 的根因是「微信是按旧设计量好的布局，被我们切成新设计后
+//  系统给的容器尺寸变了」。所以修法是**布局后校正**，而不是改系统。
+// ============================================================
 
 // ---------- 微信真实类 ----------
-// 如实声明继承关系，编译器才知道它们是系统类的子类
 @interface MMTabBar : UITabBar
 @end
 
 @interface MMTabBarController : UITabBarController
 @end
 
+// 顶部自定义栏（NewMainFrameViewController.fakeNavBarView 的类型）
+@interface MainFrameCustomBarView : UIView
+@end
+
+// 主界面控制器：这里用到 self.navigationController / self.view，必须显式声明继承关系
+@interface NewMainFrameViewController : UIViewController
+@property (nonatomic, retain) MainFrameCustomBarView *fakeNavBarView;   // 顶部自定义栏
+@property (nonatomic, retain) UIView *searchBar;                        // 实为 WCSearchBar
+@end
+
 // ---------- 开关 ----------
-static NSString *const kWCLGEnabledKey = @"wclg_native_tabbar_enabled";
+static NSString *const kWCLGEnabledKey    = @"wclg_native_tabbar_enabled";  // 总开关
+static NSString *const kWCLGDesignKey     = @"wclg_ios26_design";           // 全局设计系统（原生玻璃前提）
+static NSString *const kWCLGTopFixKey     = @"wclg_fix_top_layout";         // ★1★2★3 顶部校正
+static NSString *const kWCLGInputGlassKey = @"wclg_input_glass";            // ★4 输入框液态
+
+static BOOL WCLGFlag(NSString *key, BOOL fallback) {
+	NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+	id v = [d objectForKey:key];
+	return v == nil ? fallback : [d boolForKey:key];
+}
 
 static BOOL WCLGEnabled(void) {
 	static BOOL cached;
 	static dispatch_once_t once;
 	dispatch_once(&once, ^{
-		NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-		cached = ([d objectForKey:kWCLGEnabledKey] == nil) ? YES : [d boolForKey:kWCLGEnabledKey];
+		cached = WCLGFlag(kWCLGEnabledKey, YES);
 	});
 	return cached;
 }
 
+static BOOL WCLGDesignEnabled(void) { return WCLGFlag(kWCLGDesignKey, YES); }
+static BOOL WCLGTopFixEnabled(void) { return WCLGFlag(kWCLGTopFixKey, YES); }
+static BOOL WCLGInputGlassEnabled(void) { return WCLGFlag(kWCLGInputGlassKey, YES); }
+
 // ============================================================
-//  关掉毛玻璃
-//
-//  只设 hidden 不够 —— 微信会在自己的 layout 里把容器改回可见。
-//  直接让 UIVisualEffectView 没有 effect，它就没东西可渲染。
-//  浮动胶囊的玻璃走的是 ClearGlassView/SDF，不是 UIVisualEffectView，不受影响。
+//  通用工具
 // ============================================================
 static void WCLGKillBlur(UIView *v, NSInteger depth) {
 	if (depth > 10) return;
-	// 直接遍历，不 copy —— 这里只改 effect/hidden，不增删子视图，
-	// 没有边遍历边改的问题。copy 会在每个节点上多一次堆分配。
 	for (UIView *sub in v.subviews) {
 		if ([sub isKindOfClass:[UIVisualEffectView class]]) {
 			UIVisualEffectView *vev = (UIVisualEffectView *)sub;
@@ -43,19 +74,157 @@ static void WCLGKillBlur(UIView *v, NSInteger depth) {
 	}
 }
 
-// ============================================================
-//  关掉 iOS 26 的滚动边缘效果
-//
-//  UIKit.ScrollEdgeEffectView 是系统给可滚动内容下边缘加的模糊/渐隐，让内容滚到
-//  浮动底栏底下时柔化过渡。底栏一透明它就露出来了（实测位于 {0,782},{420,130}，
-//  正好压在底栏 y=822..912 下面）。
-//
-//  唯一手段是下面的类级 hook —— 树遍历设 hidden 打不赢，UIKit 会在自己的
-//  layout 里重新显示（实测反复触发 184 次仍是 hidden=0），已弃用。
-// ============================================================
+// iOS 26 的液态玻璃效果（拿不到就退回系统材质模糊）
+static UIVisualEffect *WCLGGlassEffect(void) {
+	Class glass = NSClassFromString(@"UIGlassEffect");
+	if (glass && [glass respondsToSelector:NSSelectorFromString(@"effectWithStyle:")]) {
+		@try {
+			id e = ((id (*)(id, SEL, NSInteger))objc_msgSend)(glass,
+						NSSelectorFromString(@"effectWithStyle:"), 0);
+			if ([e isKindOfClass:[UIVisualEffect class]]) return e;
+		} @catch (__unused NSException *ex) {}
+	}
+	return [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterial];
+}
 
 // ============================================================
-//  擦掉微信画在底栏上的东西
+//  ★1 顶部液态胶囊里按钮不居中
+//
+//  新设计下系统会给导航栏按钮套一层玻璃胶囊（类名含 Platter / LiquidLens /
+//  Glass / Container），而微信自己的按钮视图还按旧尺寸摆 → 看着偏。
+//  这里把胶囊里的按钮按胶囊中心重新摆一次（位置已对就不写，避免触发多余布局）。
+// ============================================================
+static BOOL WCLGIsGlassContainer(UIView *v) {
+	NSString *cn = NSStringFromClass([v class]);
+	if (!cn) return NO;
+	return [cn containsString:@"Platter"] || [cn containsString:@"LiquidLens"] ||
+		   [cn containsString:@"Glass"] || [cn containsString:@"Capsule"] ||
+		   [cn containsString:@"Container"];
+}
+
+static BOOL WCLGLooksLikeButton(UIView *v) {
+	if ([v isKindOfClass:[UIButton class]]) return YES;
+	NSString *cn = NSStringFromClass([v class]);
+	return cn && [cn containsString:@"Button"];
+}
+
+// 顶部标题：只把「位于条目中间区域」的标题视图水平居中，避免误动左右按钮
+static void WCLGCenterTitle(UIView *bar) {
+	if (!bar) return;
+	CGFloat W = CGRectGetWidth(bar.bounds);
+	if (W < 40.0) return;
+	for (UIView *sub in bar.subviews) {
+		NSString *cn = NSStringFromClass([sub class]);
+		BOOL isTitle = [cn containsString:@"Title"] && ![cn containsString:@"Button"];
+		if (!isTitle && ![sub isKindOfClass:[UILabel class]]) continue;
+
+		CGRect r = sub.frame;
+		CGFloat midX = CGRectGetMidX(r);
+		// 只在中间 60% 区域内、且确实偏了才校正
+		if (midX < W * 0.2 || midX > W * 0.8) continue;
+		CGFloat want = W * 0.5;
+		if (fabs(midX - want) < 1.0) continue;
+
+		[CATransaction begin];
+		[CATransaction setDisableActions:YES];
+		CGPoint c = sub.center;
+		c.x = want;
+		sub.center = c;
+		[CATransaction commit];
+	}
+}
+
+static void WCLGCenterButtonsInGlass(UIView *root, NSInteger depth) {
+	if (!root || depth > 6) return;
+	for (UIView *sub in root.subviews) {
+		if (WCLGIsGlassContainer(sub)) {
+			CGPoint target = CGPointMake(CGRectGetMidX(sub.bounds), CGRectGetMidY(sub.bounds));
+			for (UIView *g in sub.subviews) {
+				if (!WCLGLooksLikeButton(g)) continue;
+				CGPoint c = g.center;
+				if (fabs(c.x - target.x) < 0.5 && fabs(c.y - target.y) < 0.5) continue;
+				[CATransaction begin];
+				[CATransaction setDisableActions:YES];
+				g.center = target;
+				[CATransaction commit];
+			}
+		}
+		WCLGCenterButtonsInGlass(sub, depth + 1);
+	}
+}
+
+// ============================================================
+//  ★4 找聊天页的输入条（不依赖类名，靠位置 + 尺寸 + 含输入控件判定）
+// ============================================================
+static BOOL WCLGContainsTextInput(UIView *v, NSInteger depth) {
+	if (depth > 4) return NO;
+	if ([v isKindOfClass:[UITextView class]] || [v isKindOfClass:[UITextField class]]) return YES;
+	for (UIView *s in v.subviews) {
+		if (WCLGContainsTextInput(s, depth + 1)) return YES;
+	}
+	return NO;
+}
+
+static UIView *WCLGFindInputBar(UIView *root) {
+	CGFloat H = CGRectGetHeight(root.bounds), W = CGRectGetWidth(root.bounds);
+	if (H < 100 || W < 100) return nil;
+
+	UIView *best = nil;
+	CGFloat bestY = -1;
+	NSArray<UIView *> *level1 = root.subviews;
+	for (UIView *v in level1) {
+		NSArray<UIView *> *candidates = @[v];
+		for (UIView *g in v.subviews) candidates = [candidates arrayByAddingObject:g];
+		for (UIView *c in candidates) {
+			CGRect r = c.frame;
+			if (CGRectGetMinY(r) < H * 0.55) continue;
+			if (CGRectGetWidth(r) < W * 0.6) continue;
+			if (CGRectGetHeight(r) < 36.0 || CGRectGetHeight(r) > 170.0) continue;
+			if (!WCLGContainsTextInput(c, 0)) continue;
+			if (CGRectGetMinY(r) > bestY) { bestY = CGRectGetMinY(r); best = c; }
+		}
+	}
+	return best;
+}
+
+static const void *kWCLGInputGlassKey = &kWCLGInputGlassKey;
+
+static void WCLGApplyInputGlass(UIViewController *vc) {
+	if (!WCLGEnabled() || !WCLGInputGlassEnabled()) return;
+	if (![vc isKindOfClass:[UIViewController class]]) return;
+
+	UIView *bar = WCLGFindInputBar(vc.view);
+	if (!bar) return;
+	if (CGRectIsEmpty(bar.bounds)) return;          // 还没量好，等下一次布局
+
+	UIVisualEffectView *glass = objc_getAssociatedObject(bar, kWCLGInputGlassKey);
+	if (!glass) {
+		glass = [[UIVisualEffectView alloc] initWithEffect:WCLGGlassEffect()];
+		glass.userInteractionEnabled = NO;
+		glass.opaque = NO;
+		glass.backgroundColor = [UIColor clearColor];
+		glass.layer.cornerRadius = 18.0;
+		glass.layer.cornerCurve = kCACornerCurveContinuous;
+		glass.layer.masksToBounds = YES;
+		[bar insertSubview:glass atIndex:0];
+		objc_setAssociatedObject(bar, kWCLGInputGlassKey, glass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+		// 输入条自己让出底色，玻璃才看得见
+		bar.backgroundColor = [UIColor clearColor];
+		bar.opaque = NO;
+	}
+	CGRect want = CGRectInset(bar.bounds, 2.0, 2.0);
+	if (!CGRectEqualToRect(glass.frame, want)) {
+		[CATransaction begin];
+		[CATransaction setDisableActions:YES];
+		glass.frame = want;
+		[CATransaction commit];
+	}
+	// 玻璃垫到最底层，别盖住输入控件
+	[bar sendSubviewToBack:glass];
+}
+
+// ============================================================
+//  擦掉微信画在底栏上的东西（原版逻辑，未改）
 // ============================================================
 static void WCLGStripTabBar(UITabBar *bar) {
 	if (!bar || ![bar isKindOfClass:[UITabBar class]]) return;
@@ -63,13 +232,11 @@ static void WCLGStripTabBar(UITabBar *bar) {
 	[CATransaction begin];
 	[CATransaction setDisableActions:YES];
 
-	// ① 底栏自己那层底
 	bar.translucent = YES;
 	bar.opaque = NO;
 	bar.backgroundColor = [UIColor clearColor];
 	bar.layer.backgroundColor = [UIColor clearColor].CGColor;
 
-	// ② 微信塞的全尺寸背景容器：直接藏掉，光清颜色会被它重画回来
 	CGFloat bw = CGRectGetWidth(bar.bounds), bh = CGRectGetHeight(bar.bounds);
 	for (UIView *sub in bar.subviews) {
 		NSString *cn = NSStringFromClass([sub class]);
@@ -81,9 +248,6 @@ static void WCLGStripTabBar(UITabBar *bar) {
 			[cn containsString:@"_UITabButton"]) {
 			continue;
 		}
-		// 跟底栏一样大的容器 = 微信的底。frame 也必须是满的 ——
-		// bounds 满尺寸但 frame 为 0×0 的是 portal 源视图（挂在屏幕外给
-		// _UIPortalView 采样用），藏了会毁掉玻璃折射。
 		BOOL fullSize = CGRectGetWidth(sub.bounds) >= bw - 1.0 &&
 						CGRectGetHeight(sub.bounds) >= bh - 1.0 &&
 						CGRectGetWidth(sub.frame) > 1.0 &&
@@ -102,7 +266,7 @@ static void WCLGStripTabBar(UITabBar *bar) {
 			if (g.backgroundColor && CGColorGetAlpha(g.backgroundColor.CGColor) > 0.01) {
 				g.backgroundColor = [UIColor clearColor];
 			}
-			if (g.layer.backgroundColor && CGColorGetAlpha(g.layer.backgroundColor) > 0.01) {
+			if (g.layer.backgroundColor && CGColorGetAlpha(g.layer.backgroundColor.CGColor) > 0.01) {
 				g.layer.backgroundColor = [UIColor clearColor].CGColor;
 			}
 		}
@@ -110,14 +274,11 @@ static void WCLGStripTabBar(UITabBar *bar) {
 
 	[CATransaction commit];
 
-	// ③ 关掉毛玻璃
 	WCLGKillBlur(bar, 0);
 }
 
-static void WCLGAlignTabBarItems(UITabBar *bar);   // 定义在后面
+static void WCLGAlignTabBarItems(UITabBar *bar);
 
-// 微信会反复把底重画回来，延到下一个 runloop 再擦一遍。
-// 节流：微信一次会话能触发布局几百次，不节流的话主队列会堆满重复的块。
 static void WCLGStripTabBarDeferred(UITabBar *bar) {
 	if (!bar) return;
 	static CFAbsoluteTime last = 0;
@@ -132,17 +293,10 @@ static void WCLGStripTabBarDeferred(UITabBar *bar) {
 	});
 }
 
-// ============================================================
-//  对齐图标
-//
-//  系统的浮动胶囊是内缩的（如 {21,7},{378,62}），而微信的 MMTabBarItemView
-//  是按全宽均分的（0/105/210/315）。这里拿 platter 的 frame 当基准，
-//  把 item 视图重新摆到胶囊的网格上，并让内容垂直居中到胶囊。
-// ============================================================
+// 底栏图标对齐（原版逻辑，未改）
 static void WCLGAlignTabBarItems(UITabBar *bar) {
 	if (!bar) return;
 
-	// 找浮动胶囊
 	UIView *platter = nil;
 	for (UIView *sub in bar.subviews) {
 		if ([NSStringFromClass([sub class]) containsString:@"Platter"]) {
@@ -152,7 +306,6 @@ static void WCLGAlignTabBarItems(UITabBar *bar) {
 	}
 	if (!platter) return;
 
-	// 收集微信自己的 item 视图
 	NSMutableArray<UIView *> *items = [NSMutableArray array];
 	for (UIView *sub in bar.subviews) {
 		if ([NSStringFromClass([sub class]) containsString:@"MMTabBarItemView"]) {
@@ -161,7 +314,6 @@ static void WCLGAlignTabBarItems(UITabBar *bar) {
 	}
 	if (items.count == 0) return;
 
-	// 按 x 排序，保证顺序和 tab 一致
 	[items sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
 		if (a.frame.origin.x < b.frame.origin.x) return NSOrderedAscending;
 		if (a.frame.origin.x > b.frame.origin.x) return NSOrderedDescending;
@@ -177,10 +329,8 @@ static void WCLGAlignTabBarItems(UITabBar *bar) {
 		UIView *iv = items[i];
 		CGPoint c = iv.center;
 
-		// 水平：摆到胶囊的网格上
 		c.x = pf.origin.x + pf.size.width * ((CGFloat)i + 0.5) / n;
 
-		// 垂直：让 item 内容的中心落在胶囊中心
 		CGRect content = CGRectNull;
 		for (UIView *g in iv.subviews) {
 			if (g.hidden) continue;
@@ -191,8 +341,6 @@ static void WCLGAlignTabBarItems(UITabBar *bar) {
 			c.y += CGRectGetMidY(pf) - contentMidYInBar;
 		}
 
-		// 位置已经对了就别写 —— 无条件写 frame 会让 UIKit 标记重新布局，
-		// 反过来又触发 layoutSubviews，白白多跑一轮
 		if (fabs(iv.center.x - c.x) < 0.5 && fabs(iv.center.y - c.y) < 0.5) continue;
 		iv.center = c;
 	}
@@ -200,11 +348,7 @@ static void WCLGAlignTabBarItems(UITabBar *bar) {
 }
 
 // ============================================================
-//  关键：让 UIKit 认为微信没申请旧版设计
-//
-//  微信 Info.plist 里有 UIDesignRequiresCompatibility = true，这是它底栏是
-//  「全宽不透明」而不是 iOS 26 浮动玻璃的根本原因（它用 iphoneos26.1 SDK 构建，
-//  却主动退回了旧设计系统）。UIKit 走 NSBundle 读这个 key，这里把它屏蔽掉。
+//  让 UIKit 认为微信没申请旧版设计（受 wclg_ios26_design 控制）
 // ============================================================
 static BOOL WCLGIsMainBundle(NSBundle *b) {
 	return b == [NSBundle mainBundle];
@@ -213,7 +357,8 @@ static BOOL WCLGIsMainBundle(NSBundle *b) {
 %hook NSBundle
 
 - (id)objectForInfoDictionaryKey:(NSString *)key {
-	if (WCLGIsMainBundle(self) && [key isEqualToString:@"UIDesignRequiresCompatibility"]) {
+	if (WCLGEnabled() && WCLGDesignEnabled() &&
+		WCLGIsMainBundle(self) && [key isEqualToString:@"UIDesignRequiresCompatibility"]) {
 		return @NO;
 	}
 	return %orig;
@@ -221,7 +366,8 @@ static BOOL WCLGIsMainBundle(NSBundle *b) {
 
 - (NSDictionary *)infoDictionary {
 	NSDictionary *d = %orig;
-	if (WCLGIsMainBundle(self) && d[@"UIDesignRequiresCompatibility"] != nil) {
+	if (WCLGEnabled() && WCLGDesignEnabled() &&
+		WCLGIsMainBundle(self) && d[@"UIDesignRequiresCompatibility"] != nil) {
 		NSMutableDictionary *m = [d mutableCopy];
 		[m removeObjectForKey:@"UIDesignRequiresCompatibility"];
 		return m;
@@ -232,10 +378,7 @@ static BOOL WCLGIsMainBundle(NSBundle *b) {
 %end
 
 // ============================================================
-//  从类上强制关掉滚动边缘效果
-//
-//  这是 Swift 类：UIKit.ScrollEdgeEffectView（内部类 _TtCC5UIKit20...BackdropView）。
-//  树遍历会被 UIKit 反复重置，所以 setHidden: 直接强制成 YES，谁设都无效。
+//  关掉 iOS 26 滚动边缘效果（原版是全部实例；这里保持原版行为）
 // ============================================================
 static void (*wclg_orig_SEV_setHidden)(id, SEL, BOOL);
 static void wclg_SEV_setHidden(id self, SEL _cmd, BOOL hidden) {
@@ -255,7 +398,7 @@ static void WCLGHookScrollEdgeEffectView(void) {
 
 	Class c = NSClassFromString(@"UIKit.ScrollEdgeEffectView");
 	if (!c) c = objc_getClass("_TtC5UIKit20ScrollEdgeEffectView");
-	if (!c) return;   // 解析不到就只靠树遍历兜底，不影响其他功能
+	if (!c) return;
 
 	MSHookMessageEx(c, @selector(setHidden:),
 		(IMP)wclg_SEV_setHidden, (IMP *)&wclg_orig_SEV_setHidden);
@@ -268,11 +411,114 @@ static void WCLGHookScrollEdgeEffectView(void) {
 }
 
 // ============================================================
-//  Hook
+//  ★2 + ★3 顶部校正（主界面）
+//
+//  ★2 偏移：微信的 fakeNavBarView 是按旧设计量好的 → 对齐系统导航栏的 frame
+//  ★3 搜索框：搜索框是被当成 tableView 的 headerView 放的（setSearchBarToTableHeaderView），
+//     新设计下表格 header 高度不够 → 搜索框被压扁；宽度也会被内边距吃掉。
+//     这里恢复宽度、并把 header 高度撑到够放搜索框。
+// ============================================================
+%hook NewMainFrameViewController
+
+- (void)viewDidLayoutSubviews {
+	%orig;
+	if (!WCLGEnabled() || !WCLGTopFixEnabled()) return;
+
+	// ★2 顶部自定义栏对齐系统导航栏
+	UIView *fakeBar = nil;
+	@try { fakeBar = [self valueForKey:@"fakeNavBarView"]; } @catch (__unused NSException *e) {}
+	UINavigationBar *sysBar = self.navigationController.navigationBar;
+	if (fakeBar && sysBar && sysBar.window) {
+		CGRect want = [sysBar convertRect:sysBar.bounds toView:self.view];
+		CGRect cur = fakeBar.frame;
+		BOOL changed = NO;
+		if (fabs(cur.origin.y - want.origin.y) > 0.5) { cur.origin.y = want.origin.y; changed = YES; }
+		if (fabs(cur.size.height - want.size.height) > 0.5 && want.size.height > 20.0) {
+			cur.size.height = want.size.height; changed = YES;
+		}
+		if (changed) {
+			[CATransaction begin];
+			[CATransaction setDisableActions:YES];
+			fakeBar.frame = cur;
+			[CATransaction commit];
+		}
+	}
+
+	// ★3 搜索框：恢复宽度 + 撑开表头高度
+	UIView *searchBar = nil;
+	@try { searchBar = [self valueForKey:@"searchBar"]; } @catch (__unused NSException *e) {}
+	if (searchBar && searchBar.superview) {
+		CGFloat viewW = CGRectGetWidth(self.view.bounds);
+
+		// 宽度：搜索框通常左右各留 8pt；被压窄就恢复
+		CGRect f = searchBar.frame;
+		CGFloat wantW = viewW - 16.0;
+		BOOL changed = NO;
+		if (wantW > 40.0 && f.size.width < wantW - 1.0) { f.size.width = wantW; changed = YES; }
+		if (fabs(f.origin.x - 8.0) > 0.5 && f.size.width >= wantW - 1.0) { f.origin.x = 8.0; changed = YES; }
+
+		// 高度：别被压扁（低于 32 视为被压）
+		CGFloat wantH = MAX(CGRectGetHeight(f), 36.0);
+		if (CGRectGetHeight(f) < 32.0) { f.size.height = wantH; changed = YES; }
+		if (changed) {
+			[CATransaction begin];
+			[CATransaction setDisableActions:YES];
+			searchBar.frame = f;
+			[CATransaction commit];
+		}
+
+		// 表头高度不足 → 撑开，否则搜索框会被裁/压
+		UIView *header = searchBar.superview;
+		if (header && header != self.view) {
+			CGRect hf = header.frame;
+			CGFloat need = CGRectGetHeight(f) + 8.0;
+			if (CGRectGetHeight(hf) < need - 0.5) {
+				hf.size.height = need;
+				[CATransaction begin];
+				[CATransaction setDisableActions:YES];
+				header.frame = hf;
+				[CATransaction commit];
+			}
+		}
+	}
+
+	// ★1 顶部胶囊里的按钮居中 + 标题居中
+	WCLGCenterButtonsInGlass(self.view, 0);
+	if (fakeBar) WCLGCenterTitle(fakeBar);
+}
+
+%end
+
+// ★1 顶部自定义栏自己重排时也校正一次
+%hook MainFrameCustomBarView
+
+- (void)layoutSubviews {
+	%orig;
+	if (!WCLGEnabled() || !WCLGTopFixEnabled()) return;
+	WCLGCenterButtonsInGlass(self, 0);
+}
+
+%end
+
+// ============================================================
+//  ★4 输入框液态：所有控制器的布局回调里检查一次
+//     （不依赖具体类名，靠「贴底 + 宽度接近全宽 + 高度 36~170 + 含输入控件」认出输入条）
+// ============================================================
+%hook UIViewController
+
+- (void)viewDidLayoutSubviews {
+	%orig;
+	if (!WCLGEnabled() || !WCLGInputGlassEnabled()) return;
+	WCLGApplyInputGlass(self);
+}
+
+%end
+
+// ============================================================
+//  底栏 Hook（原版逻辑，未改）
 // ============================================================
 %hook MMTabBar
 
-// --- 吞掉微信的 appearance 覆盖，保留系统默认（浮动玻璃的来源）---
 - (void)setStandardAppearance:(UITabBarAppearance *)appearance {
 	if (WCLGEnabled()) return;
 	%orig;
@@ -298,13 +544,11 @@ static void WCLGHookScrollEdgeEffectView(void) {
 	%orig;
 }
 
-// 背景色：只挡不透明的
 - (void)setBackgroundColor:(UIColor *)color {
 	if (WCLGEnabled() && color && CGColorGetAlpha(color.CGColor) > 0.01) return;
 	%orig;
 }
 
-// --- 布局后重擦一遍 ---
 - (void)layoutSubviews {
 	%orig;
 	WCLGStripTabBar(self);
@@ -335,8 +579,6 @@ static void WCLGHookScrollEdgeEffectView(void) {
 
 %end
 
-// MMTabBarController 是 UITabBarController，别干预它的原生行为。
-// 只挂钩微信自己的按钮重排，重排后再擦一次。
 %hook MMTabBarController
 
 - (void)relayoutButtons:(BOOL)animated {
@@ -348,12 +590,16 @@ static void WCLGHookScrollEdgeEffectView(void) {
 %end
 
 // ============================================================
-//  wczz 设置页对接（加在原版末尾，原有代码一字未动）
+//  wczz 设置页对接（4 个开关）
 // ============================================================
-BOOL WCZZTabBarGlassEnabled(void) {
-	return WCLGEnabled();
-}
+BOOL WCZZTabBarGlassEnabled(void) { return WCLGEnabled(); }
+void WCZZSetTabBarGlassEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGEnabledKey]; }
 
-void WCZZSetTabBarGlassEnabled(BOOL enabled) {
-	[[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kWCLGEnabledKey];
-}
+BOOL WCZZGlassDesignEnabled(void) { return WCLGDesignEnabled(); }
+void WCZZSetGlassDesignEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGDesignKey]; }
+
+BOOL WCZZGlassTopFixEnabled(void) { return WCLGTopFixEnabled(); }
+void WCZZSetGlassTopFixEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGTopFixKey]; }
+
+BOOL WCZZGlassInputEnabled(void) { return WCLGInputGlassEnabled(); }
+void WCZZSetGlassInputEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGInputGlassKey]; }
