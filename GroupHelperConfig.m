@@ -553,52 +553,24 @@ NSArray<NSString *> *MMGroupSessionMgrCandidates(void) {
 BOOL MMGroupSessionListHookInstalled(void) { return MMGroupOrigGetSessionInfoList != NULL; }
 NSString *MMGroupSessionListHookClassName(void) { return MMGroupHookedClassName; }
 
-/// 钩子本体：正常模式 → 摘掉组内会话 + 插入入口行；inRoomList 模式 → 只返回组内会话。
+/// 钩子本体：**纯透传 + 记录**。
+///
+/// 为什么不在这一层过滤：8.0.79 的界面是按 MainFrameLogicController 的
+/// getSessionCountForSection: / getSessionInfoAtIndexPath: / getCellDataAtIndexPath:
+/// 逐行取的（实测：逻辑层 2000+ 次调用，模型层只有几十次），所以过滤放在视图层，
+/// 两处同时过滤会导致索引错位（表现为「点 A 进去是 B」）。
 static id MMGroupGetSessionInfoListHook(id self, SEL _cmd) {
     id raw = MMGroupOrigGetSessionInfoList ? MMGroupOrigGetSessionInfoList(self, _cmd) : nil;
     if (MMGroupIsBypassingListFilter()) return raw;
-    if (!MMGroupIsEnabled() || ![raw isKindOfClass:[NSArray class]]) return raw;
-
-    BOOL previous = MMGroupBypassListFilter;
-    MMGroupBypassListFilter = YES;
-    id result = raw;
     @try {
-        NSArray *list = (NSArray *)raw;
-        NSArray *grouped = MMGroupGroupedSessionsFromList(list);
-        MMGroupRecordHookCall(list, grouped);
-        if (grouped.count == 0) {
-            result = list;
-        } else if (MMGroupIsInsideHelper()) {
-            result = grouped;                       // 组内视图：只显示组内会话
-            MMGroupLog(@"会话列表（组内）：%lu 个", (unsigned long)grouped.count);
-        } else {
-            NSMutableSet<NSString *> *hidden = [NSMutableSet set];
-            for (id session in grouped) {
-                NSString *userName = MMGroupUserNameOfSession(session);
-                if (userName.length) [hidden addObject:userName];
-            }
-            NSMutableArray *filtered = [NSMutableArray arrayWithCapacity:list.count + 1];
-            for (id session in list) {
-                NSString *userName = MMGroupUserNameOfSession(session);
-                if (userName.length && [hidden containsObject:userName]) continue;
-                [filtered addObject:session];
-            }
-            if (MMGroupShowHelper()) {
-                id helper = MMGroupCreateHelperSession();
-                if (helper) {
-                    NSUInteger index = MMGroupHelperTop() ? 0
-                        : (NSUInteger)MAX(0, MIN((NSInteger)filtered.count, MMGroupHelperIndex()));
-                    [filtered insertObject:helper atIndex:MIN(index, filtered.count)];
-                }
-            }
-            result = [filtered copy];
+        if ([raw isKindOfClass:[NSArray class]]) {
+            NSArray *list = (NSArray *)raw;
+            MMGroupRecordHookCall(list, MMGroupGroupedSessionsFromList(list));
         }
     } @catch (NSException *exception) {
-        MMGroupLog(@"会话列表钩子异常: %@", exception);
-        result = raw;
+        MMGroupLog(@"会话列表钩子记录异常: %@", exception);
     }
-    MMGroupBypassListFilter = previous;
-    return result;
+    return raw;         // ← 原样返回：过滤只在视图层做
 }
 
 BOOL MMGroupInstallSessionListHook(void) {
@@ -628,6 +600,7 @@ static MMGroupIndexIMP MMGroupOrigVCSession = NULL;
 static MMGroupIndexIMP MMGroupOrigVCCellData = NULL;
 static MMGroupCountIMP MMGroupOrigLogicCount = NULL;
 static MMGroupIndexIMP MMGroupOrigLogicSession = NULL;
+static MMGroupIndexIMP MMGroupOrigLogicBaseInfo = NULL;   // 微信「打开会话」走这个！
 static MMGroupIndexIMP MMGroupOrigLogicCellData = NULL;
 
 @interface MMGroupDisplayCache : NSObject
@@ -660,6 +633,7 @@ static SEL MMGroupVCSessionSel(void) { return NSSelectorFromString(@"logicGetSes
 static SEL MMGroupVCCellDataSel(void) { return NSSelectorFromString(@"logicGetCellDataAtIndexPath:"); }
 static SEL MMGroupLogicCountSel(void) { return NSSelectorFromString(@"getSessionCountForSection:"); }
 static SEL MMGroupLogicSessionSel(void) { return NSSelectorFromString(@"getSessionInfoAtIndexPath:"); }
+static SEL MMGroupLogicBaseInfoSel(void) { return NSSelectorFromString(@"getSessionBaseInfoAtIndexPath:"); }
 static SEL MMGroupLogicCellDataSel(void) { return NSSelectorFromString(@"getCellDataAtIndexPath:"); }
 
 static void MMGroupNoteSection(long long section, long long count) {
@@ -828,9 +802,11 @@ static MMGroupDisplayCache *MMGroupCacheFor(id host, BOOL logicLayer) {
     return cache;
 }
 
-static id MMGroupMappedRow(id host, id indexPath, BOOL logicLayer, BOOL wantCellData) {
+/// channel: 0 = session, 1 = cellData, 2 = baseInfo（微信打开会话用的那个）
+static id MMGroupMappedRowChannel(id host, id indexPath, BOOL logicLayer, NSInteger channel) {
     if (!MMGroupIsEnabled() || !indexPath) return nil;
-    MMGroupIndexIMP orig = logicLayer ? MMGroupOrigLogicSession : MMGroupOrigVCSession;
+    MMGroupIndexIMP orig = channel == 2 ? MMGroupOrigLogicBaseInfo
+                        : (logicLayer ? MMGroupOrigLogicSession : MMGroupOrigVCSession);
     MMGroupIndexIMP origCellData = logicLayer ? MMGroupOrigLogicCellData : MMGroupOrigVCCellData;
     MMGroupDisplayCache *cache = MMGroupCacheFor(host, logicLayer);
     NSInteger section = [indexPath section];
@@ -841,13 +817,21 @@ static id MMGroupMappedRow(id host, id indexPath, BOOL logicLayer, BOOL wantCell
     }
     id slot = cache.slots[(NSUInteger)row];
     if ([slot isKindOfClass:[NSString class]] && [slot isEqualToString:kMMGroupHelperSlot]) {
-        return wantCellData ? cache.helperCellData : cache.helperSession;
+        // 入口行：cellData 用克隆的那份；session / baseInfo 都返回合成的入口会话
+        return channel == 1 ? cache.helperCellData : cache.helperSession;
     }
     NSIndexPath *mapped = [NSIndexPath indexPathForRow:[slot integerValue] inSection:section];
-    if (wantCellData) {
+    if (channel == 1) {
         return origCellData ? origCellData(host, logicLayer ? MMGroupLogicCellDataSel() : MMGroupVCCellDataSel(), mapped) : nil;
     }
+    if (channel == 2) {
+        return orig ? orig(host, MMGroupLogicBaseInfoSel(), mapped) : nil;
+    }
     return orig ? orig(host, logicLayer ? MMGroupLogicSessionSel() : MMGroupVCSessionSel(), mapped) : nil;
+}
+
+static id MMGroupMappedRow(id host, id indexPath, BOOL logicLayer, BOOL wantCellData) {
+    return MMGroupMappedRowChannel(host, indexPath, logicLayer, wantCellData ? 1 : 0);
 }
 
 static long long MMGroupCountHookCommon(id self, SEL _cmd, long long section, BOOL logicLayer) {
@@ -876,6 +860,10 @@ static id MMGroupVCCellDataHook(id self, SEL _cmd, id indexPath) {
 static long long MMGroupLogicCountHook(id self, SEL _cmd, long long section) {
     MMGroupCountLogic++;
     return MMGroupCountHookCommon(self, _cmd, section, YES);
+}
+static id MMGroupLogicBaseInfoHook(id self, SEL _cmd, id indexPath) {
+    id mapped = MMGroupMappedRowChannel(self, indexPath, YES, 2);
+    return mapped ?: (MMGroupOrigLogicBaseInfo ? MMGroupOrigLogicBaseInfo(self, _cmd, indexPath) : nil);
 }
 static id MMGroupLogicSessionHook(id self, SEL _cmd, id indexPath) {
     MMGroupSessionLogic++;
@@ -912,10 +900,12 @@ BOOL MMGroupInstallViewHooks(void) {
     if (logicClass) {
         MMGroupSwizzle(logicClass, MMGroupLogicCountSel(), (IMP)MMGroupLogicCountHook, (void **)&MMGroupOrigLogicCount);
         MMGroupSwizzle(logicClass, MMGroupLogicSessionSel(), (IMP)MMGroupLogicSessionHook, (void **)&MMGroupOrigLogicSession);
+        MMGroupSwizzle(logicClass, MMGroupLogicBaseInfoSel(), (IMP)MMGroupLogicBaseInfoHook, (void **)&MMGroupOrigLogicBaseInfo);
         MMGroupSwizzle(logicClass, MMGroupLogicCellDataSel(), (IMP)MMGroupLogicCellDataHook, (void **)&MMGroupOrigLogicCellData);
     }
-    MMGroupLog(@"视图层钩子：VC %@ / 逻辑层 %@",
-               MMGroupOrigVCCount ? @"✓" : @"✗", MMGroupOrigLogicCount ? @"✓" : @"✗");
+    MMGroupLog(@"视图层钩子：VC %@ / 逻辑层 %@ / baseInfo %@",
+               MMGroupOrigVCCount ? @"✓" : @"✗", MMGroupOrigLogicCount ? @"✓" : @"✗",
+               MMGroupOrigLogicBaseInfo ? @"✓" : @"✗");
     return MMGroupViewHooksInstalled();
 }
 
@@ -1034,6 +1024,7 @@ NSString *MMGroupDiagnostics(void) {
         }
         [out appendFormat:@"钩子: %@%@\n", MMGroupSessionListHookInstalled() ? @"已安装" : @"未安装",
          MMGroupSessionListHookInstalled() ? [NSString stringWithFormat:@" (%@)", MMGroupSessionListHookClassName() ?: @"?"] : @""];
+        [out appendString:@"（模型层只记录不过滤；收起/入口都发生在视图层）\n"];
         if (MMGroupHookCalls == 0) {
             [out appendString:@"GetSessionInfoList 未被调用过\n"];
         } else {

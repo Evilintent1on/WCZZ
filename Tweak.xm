@@ -805,20 +805,24 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
 %hook NewMainFrameViewController
 
 - (void)tableView:(id)tableView didSelectRowAtIndexPath:(id)indexPath {
-    // 实测复刻 -[NewMainFrameViewController tableView:didSelectRowAtIndexPath:]（IMP 0x4d2ed0）：
-    //   logic = [self valueForKey:@"m_mainFrameLogicController"];
-    //   session = [logic getSessionInfoAtIndexPath:indexPath];
-    //   if (session.m_nsUserName == "MGRoomHelper") { if (RoomList.count) push 一个新的主界面(标题=roomName, inRoomList=YES); return; }
+    // 原版：logic = [self valueForKey:@"m_mainFrameLogicController"]; session = [logic getSessionInfoAtIndexPath:indexPath];
+    //       if (session.m_nsUserName == "MGRoomHelper") { push 组内页面; return; }
+    // 这里两层都解析一遍（逻辑层优先），保证和显示映射完全一致，避免行号错位。
     if (MMGroupIsEnabled()) {
         id logic = WCZZValue(self, @"m_mainFrameLogicController");
-        SEL getSessionSel = NSSelectorFromString(@"getSessionInfoAtIndexPath:");
-        if (logic && [logic respondsToSelector:getSessionSel]) {
-            id session = ((id (*)(id, SEL, id))objc_msgSend)(logic, getSessionSel, indexPath);
-            NSString *userName = MMGroupUserNameOfSession(session);
-            if (MMGroupIsHelperSession(userName)) {
-                if ([MMGroupRoomList() count]) {
-                    [self wczzGroupPushRoomHelper];
-                }
+        SEL logicSel = NSSelectorFromString(@"getSessionInfoAtIndexPath:");
+        if (logic && [logic respondsToSelector:logicSel]) {
+            id session = ((id (*)(id, SEL, id))objc_msgSend)(logic, logicSel, indexPath);
+            if (MMGroupIsHelperSession(MMGroupUserNameOfSession(session))) {
+                if ([MMGroupRoomList() count]) [self wczzGroupPushRoomHelper];
+                return;
+            }
+        }
+        SEL vcSel = NSSelectorFromString(@"logicGetSessionAtIndexPath:");
+        if ([self respondsToSelector:vcSel]) {
+            id session = ((id (*)(id, SEL, id))objc_msgSend)(self, vcSel, indexPath);
+            if (MMGroupIsHelperSession(MMGroupUserNameOfSession(session))) {
+                if ([MMGroupRoomList() count]) [self wczzGroupPushRoomHelper];
                 return;
             }
         }
@@ -860,6 +864,10 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
     if (vc && self.navigationController) {
         @try {
             [self.navigationController pushViewController:vc animated:YES];
+            // 保证能返回：打开侧滑返回手势 + 兜底左按钮
+            if (@available(iOS 7.0, *)) {
+                self.navigationController.interactivePopGestureRecognizer.enabled = YES;
+            }
             if (!vc.navigationItem.leftBarButtonItem && vc.navigationItem.leftBarButtonItem != nil) {
                 // 理论上不需要；保险起见保证能返回
             }
@@ -938,16 +946,22 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
     if (MMGroupIsInsideHelper()) {
         @try { [self setValue:MMGroupHelperTitle() forKey:@"m_nsTitle"]; } @catch (__unused NSException *e) {}
         self.navigationItem.title = MMGroupHelperTitle();
-        if (!self.navigationItem.leftBarButtonItem) {
-            self.navigationItem.leftBarButtonItem =
-                [[UIBarButtonItem alloc] initWithTitle:@"返回" style:UIBarButtonItemStylePlain
-                                                target:self action:@selector(wczzGroupExitInside)];
+        UINavigationController *nav = self.navigationController;
+        BOOL pushedPage = nav && nav.viewControllers.count > 1 && nav.viewControllers.firstObject != self;
+        if (pushedPage) {
+            // 微信主界面自己会设左按钮/隐藏返回，这里强制保证有「返回」
+            self.navigationItem.hidesBackButton = NO;
+            if (!self.navigationItem.leftBarButtonItem ||
+                ![self.navigationItem.leftBarButtonItem.target isEqual:self]) {
+                self.navigationItem.leftBarButtonItem =
+                    [[UIBarButtonItem alloc] initWithTitle:@"返回" style:UIBarButtonItemStylePlain
+                                                    target:self action:@selector(wczzGroupExitInside)];
+            }
         }
     }
     MMGroupForceReloadSessions();
 }
 
-// MiYou：标题由 m_nsTitle 决定，inRoomList 时显示 roomName
 - (id)m_nsTitle {
     id title = %orig;
     if (MMGroupIsInsideHelper()) return MMGroupHelperTitle();
