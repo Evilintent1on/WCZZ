@@ -67,8 +67,12 @@ NSString *MMGroupUserNameOfSession(id session) {
 
 unsigned int MMGroupUnreadOfSession(id session) {
     if (!session) return 0;
-    for (NSString *key in @[@"m_uUnReadCount", @"m_uUnreadCount", @"unreadCount", @"m_nUnReadCount"]) {
+    for (NSString *key in @[@"m_uiUnReadCount", @"m_uUnReadCount", @"m_uUnreadCount", @"unreadCount", @"m_nUnReadCount"]) {
         id value = MMGroupValue(session, key);
+        if ([value respondsToSelector:@selector(unsignedIntValue)]) return [value unsignedIntValue];
+    }
+    if ([session respondsToSelector:@selector(getUnReadCount)]) {
+        id value = [session performSelector:@selector(getUnReadCount)];
         if ([value respondsToSelector:@selector(unsignedIntValue)]) return [value unsignedIntValue];
     }
     return 0;
@@ -91,7 +95,7 @@ NSString *MMGroupDescribeSession(id session) {
     if (!session) return @"(nil)";
     NSMutableString *out = [NSMutableString string];
     [out appendFormat:@"类=%@ ", NSStringFromClass([session class])];
-    for (NSString *key in @[@"m_nsUserName", @"m_nsNickName", @"m_uUnReadCount", @"sortTime"]) {
+    for (NSString *key in @[@"m_nsUserName", @"m_nsNickName", @"m_uiUnReadCount", @"m_uUnReadCount", @"sortTime"]) {
         id value = MMGroupValue(session, key);
         [out appendFormat:@"%@=%@ ", key, value ?: @"(nil)"];
     }
@@ -500,7 +504,7 @@ static NSString *MMGroupSafeDescribe(id session) {
         if (![session respondsToSelector:@selector(class)]) return @"(非对象)";
         NSMutableString *out = [NSMutableString string];
         [out appendFormat:@"类=%@ ", NSStringFromClass([session class])];
-        for (NSString *key in @[@"m_nsUserName", @"m_nsNickName", @"m_uUnReadCount", @"sortTime"]) {
+        for (NSString *key in @[@"m_nsUserName", @"m_nsNickName", @"m_uiUnReadCount", @"m_uUnReadCount", @"sortTime"]) {
             id value = nil;
             @try { value = [session valueForKey:key]; } @catch (__unused NSException *e) { value = nil; }
             [out appendFormat:@"%@=%@ ", key, value ?: @"(nil)"];
