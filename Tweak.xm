@@ -9,10 +9,7 @@
 // 底栏液态玻璃（WCZZTabBarGlass.xm）
 BOOL WCZZTabBarGlassEnabled(void);
 void WCZZSetTabBarGlassEnabled(BOOL);
-BOOL WCZZGlassDesignEnabled(void);
-void WCZZSetGlassDesignEnabled(BOOL);
-BOOL WCZZGlassBottomEdgeEnabled(void);
-void WCZZSetGlassBottomEdgeEnabled(BOOL);
+
 BOOL WCZZTabBarGlassEnabled(void);
 void WCZZSetTabBarGlassEnabled(BOOL enabled);
 
@@ -135,7 +132,7 @@ static id WCZZValue(id obj, NSString *key) {
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
-    if (section == 2) return 3;
+    if (section == 2) return 1;
     return 1;
 }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section { return 28.0; }
@@ -166,13 +163,7 @@ static id WCZZValue(id obj, NSString *key) {
         UISwitch *sw=[UISwitch new]; [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
         sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
-        if (ip.row == 0) {
-            c.textLabel.text=@"底栏液态玻璃"; sw.tag=300; sw.on=WCZZTabBarGlassEnabled();
-        } else if (ip.row == 1) {
-            c.textLabel.text=@"设计系统"; sw.tag=301; sw.on=WCZZGlassDesignEnabled();
-        } else {
-            c.textLabel.text=@"底部边缘效果"; sw.tag=306; sw.on=WCZZGlassBottomEdgeEnabled();
-        }
+        c.textLabel.text=@"底栏液态玻璃"; sw.tag=300; sw.on=WCZZTabBarGlassEnabled();
     }
     return c;
 }
@@ -180,7 +171,6 @@ static id WCZZValue(id obj, NSString *key) {
     if (sw.tag == 100) WCZZSetBool(WCZZRedDetailKey, sw.on);
     if (sw.tag == 300) { WCZZSetTabBarGlassEnabled(sw.on); [self.tableView reloadData]; }
     if (sw.tag == 301) { WCZZSetGlassDesignEnabled(sw.on); [self.tableView reloadData]; }
-    if (sw.tag == 306) { WCZZSetGlassBottomEdgeEnabled(sw.on); [self.tableView reloadData]; }
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
