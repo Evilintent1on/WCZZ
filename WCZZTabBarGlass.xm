@@ -34,10 +34,26 @@
 @interface NewMainFrameViewController : UIViewController
 @end
 
+// ★ 实测（诊断数据）：聊天输入栏就是这两个类
+//   MMInputToolView（整页容器） → InputToolContainerView（真正的那条，402x90）
+@interface MMInputToolView : UIView
+@end
+
+@interface InputToolContainerView : UIView
+@end
+
+// ★ 实测：微信顶部用的是自己的 UINavigationBar 子类 WCCustomNavigationBar
+//   （v3 里我钩的是 UINavigationBar，子类重写了 layoutSubviews → 我的代码从来没执行过）
+@interface WCCustomNavigationBar : UINavigationBar
+@end
+
 // ---------- 开关 ----------
 static NSString *const kWCLGEnabledKey    = @"wclg_native_tabbar_enabled";  // 总开关（原有）
 static NSString *const kWCLGDesignKey     = @"wclg_ios26_design";           // 默认开 = 原版行为
 static NSString *const kWCLGInputGlassKey = @"wclg_input_glass";            // 默认开 = 新增的输入框液态
+static NSString *const kWCLGTopFixKey     = @"wclg_fix_top_layout";         // 默认开 = 顶部按钮/标题校正
+static NSString *const kWCLGUnderlapKey   = @"wclg_input_underlap";         // 默认关 = 让内容滚到输入条下面（折射更明显）
+static NSString *const kWCLGRedesignKey   = @"wclg_redesign_input";         // 默认开 = 重做输入栏布局
 
 static BOOL WCLGFlag(NSString *key, BOOL fallback) {
 	NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
@@ -56,6 +72,9 @@ static BOOL WCLGEnabled(void) {
 
 static BOOL WCLGDesignEnabled(void) { return WCLGFlag(kWCLGDesignKey, YES); }
 static BOOL WCLGInputGlassEnabled(void) { return WCLGFlag(kWCLGInputGlassKey, YES); }
+static BOOL WCLGTopFixEnabled(void) { return WCLGFlag(kWCLGTopFixKey, YES); }
+static BOOL WCLGUnderlapEnabled(void) { return WCLGFlag(kWCLGUnderlapKey, NO); }
+static BOOL WCLGRedesignEnabled(void) { return WCLGFlag(kWCLGRedesignKey, YES); }
 
 // ============================================================
 //  原版逻辑：关掉毛玻璃
@@ -182,12 +201,21 @@ static void WCLGClearBackdrop(UIView *bar, UIView *root) {
 
 static const void *kWCLGInputGlassAssocKey = &kWCLGInputGlassAssocKey;
 
+static void WCLGRedesignInputBar(UIView *bar, UIView *root);   // 实现在后面（输入栏重做）
+
 static void WCLGApplyInputGlass(UIViewController *vc) {
 	if (!vc || ![vc isKindOfClass:[UIViewController class]]) return;
 	if (!vc.isViewLoaded) return;
 
 	UIView *bar = WCLGFindInputBar(vc.view);
 	if (!bar || CGRectIsEmpty(bar.bounds)) return;
+
+	// ★ 重做模式（默认）：三段式盒子自己带玻璃，这里只清底色，不插旧版单层玻璃（避免双层）
+	if (WCLGRedesignEnabled()) {
+		WCLGClearBackdrop(bar, vc.view);
+		WCLGRedesignInputBar(bar, vc.view);
+		return;
+	}
 
 	// 已经加过就只更新 frame
 	UIVisualEffectView *glass = objc_getAssociatedObject(bar, kWCLGInputGlassAssocKey);
@@ -197,15 +225,20 @@ static void WCLGApplyInputGlass(UIViewController *vc) {
 		glass.opaque = NO;
 		glass.backgroundColor = [UIColor clearColor];
 		glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-		glass.layer.cornerRadius = 18.0;
+		glass.layer.cornerRadius = 22.0;
 		glass.layer.cornerCurve = kCACornerCurveContinuous;
 		glass.layer.masksToBounds = YES;
+		// ★ 实测问题：玻璃插进去了但看不见 —— 输入条后面是纯色底，液态玻璃太透。
+		//   这里加一层极淡的着色 + 发丝边，保证在任何底色上都能看出是一条玻璃。
+		glass.contentView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.06];
+		glass.layer.borderWidth = 0.5;
+		glass.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.18].CGColor;
 		[bar insertSubview:glass atIndex:0];
 		objc_setAssociatedObject(bar, kWCLGInputGlassAssocKey, glass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 	}
 	WCLGClearBackdrop(bar, vc.view);
 
-	CGRect want = CGRectInset(bar.bounds, 2.0, 2.0);
+	CGRect want = CGRectInset(bar.bounds, 6.0, 8.0);       // 内缩一点，看起来是浮动的玻璃条
 	if (!CGRectEqualToRect(glass.frame, want)) {
 		[CATransaction begin];
 		[CATransaction setDisableActions:YES];
@@ -213,6 +246,23 @@ static void WCLGApplyInputGlass(UIViewController *vc) {
 		[CATransaction commit];
 	}
 	[bar sendSubviewToBack:glass];
+
+	// 可选（默认关）：把聊天表格底部 inset 留小一点，让消息能滚到输入条下面 → 折射更明显
+	if (WCLGUnderlapEnabled()) {
+		WCLGViewTreeContains(vc.view, 0, ^BOOL(UIView *v) {
+			if (![v isKindOfClass:[UITableView class]]) return NO;
+			UITableView *tv = (UITableView *)v;
+			if (CGRectGetWidth(tv.bounds) < CGRectGetWidth(vc.view.bounds) * 0.8) return NO;
+			if (tv.contentInset.bottom <= 60.0) return NO;
+			UIEdgeInsets ins = tv.contentInset;
+			ins.bottom = 40.0;
+			tv.contentInset = ins;
+			UIEdgeInsets si = tv.scrollIndicatorInsets;
+			si.bottom = 40.0;
+			tv.scrollIndicatorInsets = si;
+			return YES;
+		});
+	}
 }
 
 // ============================================================
@@ -339,6 +389,320 @@ static void WCLGAlignTabBarItems(UITabBar *bar) {
 	[CATransaction commit];
 }
 
+
+
+// ============================================================
+//  ★ 输入栏重做：语音 / 输入框 / (加号 + 笑脸) 三段式
+//
+//      [ 语音 ]  [    输入框    ]  [ 加号 笑脸 ]
+//      独立按钮     独立的框          合成一个框
+//
+//  做法：微信自己的控件**实例不动**（target/action/长按说话、表情面板、加号面板全部照旧），
+//  只是把它们重新挂到我们建的三层玻璃盒里，并在微信布局完成后按我们的规则摆一次。
+//  识别：先按类名关键字，再按从左到右的位置兜底；识别结果会写进诊断，便于核对。
+// ============================================================
+static CGFloat const kWCLGInMargin = 8.0;    // 外边距
+static CGFloat const kWCLGInGap    = 8.0;    // 三段间距
+static CGFloat const kWCLGInBoxH   = 44.0;   // 盒子高度
+static CGFloat const kWCLGInVoiceW = 44.0;   // 语音盒宽度
+static CGFloat const kWCLGInRightW = 84.0;   // 右侧（加号+笑脸）盒宽度
+static CGFloat const kWCLGInRadius = 22.0;   // 圆角
+static NSInteger WCLGRedesignPasses = 0;
+static NSString *WCLGRedesignReport = nil;   // 诊断用：识别结果
+
+static BOOL WCLGNameHas(UIView *v, NSArray<NSString *> *keys) {
+	NSString *cn = WCLGShortClass(v);
+	if (!cn) return NO;
+	for (NSString *k in keys) {
+		if ([cn rangeOfString:k options:NSCaseInsensitiveSearch].location != NSNotFound) return YES;
+	}
+	return NO;
+}
+
+// 递归找第一个满足条件的视图（不限层数，限制总数）
+static UIView *WCLGFindFirst(UIView *root, NSInteger depth, NSInteger *budget,
+							 BOOL (^pred)(UIView *)) {
+	if (!root || depth > 8 || *budget <= 0) return nil;
+	(*budget)--;
+	if (pred(root)) return root;
+	for (UIView *s in root.subviews) {
+		UIView *r = WCLGFindFirst(s, depth + 1, budget, pred);
+		if (r) return r;
+	}
+	return nil;
+}
+
+static UIVisualEffectView *WCLGMakeInputBox(void) {
+	UIVisualEffectView *box = [[UIVisualEffectView alloc] initWithEffect:WCLGGlassEffect()];
+	box.userInteractionEnabled = YES;
+	box.opaque = NO;
+	box.backgroundColor = [UIColor clearColor];
+	box.contentView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.06];
+	box.layer.cornerRadius = kWCLGInRadius;
+	box.layer.cornerCurve = kCACornerCurveContinuous;
+	box.layer.masksToBounds = YES;
+	box.layer.borderWidth = 0.5;
+	box.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.18].CGColor;
+	return box;
+}
+
+static const void *kVoiceBoxKey = &kVoiceBoxKey;
+static const void *kTextBoxKey  = &kTextBoxKey;
+static const void *kRightBoxKey = &kRightBoxKey;
+
+// 把某个控件放进盒子里并铺开（控件自己仍响应事件）
+static void WCLGMountInBox(UIView *box, UIView *control, CGRect frame, CGFloat radius) {
+	if (!box || !control) return;
+	if (control.superview != box.contentView) {      // 注意：控件最终挂在 box.contentView 上
+		[control removeFromSuperview];
+		[box.contentView addSubview:control];        // 放 contentView 里，玻璃才在它后面
+		control.translatesAutoresizingMaskIntoConstraints = YES;
+		control.autoresizingMask = UIViewAutoresizingNone;
+	}
+	if (!CGRectEqualToRect(control.frame, frame)) {
+		[CATransaction begin];
+		[CATransaction setDisableActions:YES];
+		control.frame = frame;
+		[CATransaction commit];
+	}
+	if (radius > 0.0) {
+		control.layer.cornerRadius = radius;
+		control.layer.masksToBounds = YES;
+	}
+	control.backgroundColor = [UIColor clearColor];
+	control.opaque = NO;
+	control.layer.backgroundColor = [UIColor clearColor].CGColor;
+}
+
+static void WCLGRedesignInputBar(UIView *bar, UIView *root) {
+	if (!bar || !WCLGEnabled() || !WCLGRedesignEnabled()) return;
+	if (CGRectIsEmpty(bar.bounds)) return;
+
+	CGFloat barW = CGRectGetWidth(bar.bounds), barH = CGRectGetHeight(bar.bounds);
+	CGFloat safeBottom = 0.0;
+	if (root) {
+		UIEdgeInsets in = root.safeAreaInsets;
+		safeBottom = in.bottom;
+	}
+	CGFloat contentH = barH - safeBottom;
+	if (contentH < 30.0) contentH = barH;
+	CGFloat boxY = (contentH - kWCLGInBoxH) / 2.0;
+	if (boxY < 0.0) boxY = 0.0;
+
+	// ---- 找控件 ----
+	NSInteger budget = 400;
+	UIView *textInput = WCLGFindFirst(bar, 0, &budget, ^BOOL(UIView *v) {
+		return [v isKindOfClass:[UITextView class]] || [v isKindOfClass:[UITextField class]];
+	});
+
+	// 收集所有按钮类控件，按 x 排序
+	NSMutableArray<UIView *> *buttons = [NSMutableArray array];
+	NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:bar];
+	NSInteger visited = 0;
+	while (stack.count && visited < 400) {
+		UIView *v = stack.lastObject;
+		[stack removeLastObject];
+		visited++;
+		for (UIView *s in v.subviews) {
+			if ([s isKindOfClass:[UIControl class]] || WCLGNameHas(s, @[@"Button", @"Item"])) {
+				if (![s isKindOfClass:[UITextView class]] && ![s isKindOfClass:[UITextField class]]) {
+					[buttons addObject:s];
+				}
+			}
+			[stack addObject:s];
+		}
+	}
+	[buttons sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+		CGFloat ax = [a convertPoint:CGPointZero toView:bar].x;
+		CGFloat bx = [b convertPoint:CGPointZero toView:bar].x;
+		if (ax < bx) return NSOrderedAscending;
+		if (ax > bx) return NSOrderedDescending;
+		return NSOrderedSame;
+	}];
+
+	// ---- 分类：关键字优先，位置兜底 ----
+	UIView *voice = nil, *smiley = nil, *plus = nil;
+	for (UIView *b in buttons) {
+		if (!voice && WCLGNameHas(b, @[@"Voice", @"Audio", @"Record", @"Talk", @"Mic"])) voice = b;
+		else if (!smiley && WCLGNameHas(b, @[@"Emoticon", @"Smiley", @"Face", @"Expression", @"Emoji"])) smiley = b;
+		else if (!plus && WCLGNameHas(b, @[@"Plus", @"Add", @"More"])) plus = b;
+	}
+	if (!voice) {
+		for (UIView *b in buttons) {                 // 位置：最左边那个
+			if (b == smiley || b == plus || b == textInput) continue;
+			voice = b; break;
+		}
+	}
+	if (!smiley || !plus) {
+		NSMutableArray<UIView *> *rest = [NSMutableArray array];
+		for (UIView *b in buttons) {
+			if (b == voice || b == smiley || b == plus) continue;
+			[rest addObject:b];
+		}
+		if (!plus && rest.count) { plus = rest.lastObject; [rest removeLastObject]; }
+		if (!smiley && rest.count) { smiley = rest.lastObject; }
+	}
+
+	// 诊断记录
+	WCLGRedesignReport = [NSString stringWithFormat:
+		@"输入栏 %@ %.0fx%.0f\n  语音: %@\n  输入: %@\n  笑脸: %@\n  加号: %@\n  按钮总数 %lu\n",
+		WCLGShortClass(bar), barW, barH,
+		voice ? WCLGShortClass(voice) : @"(无)", textInput ? WCLGShortClass(textInput) : @"(无)",
+		smiley ? WCLGShortClass(smiley) : @"(无)", plus ? WCLGShortClass(plus) : @"(无)",
+		(unsigned long)buttons.count];
+	WCLGRedesignPasses++;
+
+	// ---- 三个盒子 ----
+	UIVisualEffectView *voiceBox = objc_getAssociatedObject(bar, kVoiceBoxKey);
+	UIVisualEffectView *textBox  = objc_getAssociatedObject(bar, kTextBoxKey);
+	UIVisualEffectView *rightBox = objc_getAssociatedObject(bar, kRightBoxKey);
+	if (!voiceBox) {
+		voiceBox = WCLGMakeInputBox();
+		textBox  = WCLGMakeInputBox();
+		rightBox = WCLGMakeInputBox();
+		objc_setAssociatedObject(bar, kVoiceBoxKey, voiceBox, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+		objc_setAssociatedObject(bar, kTextBoxKey,  textBox,  OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+		objc_setAssociatedObject(bar, kRightBoxKey, rightBox, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+		[bar addSubview:voiceBox];
+		[bar addSubview:textBox];
+		[bar addSubview:rightBox];
+		bar.backgroundColor = [UIColor clearColor];
+		bar.opaque = NO;
+		bar.layer.backgroundColor = [UIColor clearColor].CGColor;
+	}
+
+	CGFloat rightW = (smiley && plus) ? kWCLGInRightW : 48.0;
+	CGRect voiceFrame = CGRectMake(kWCLGInMargin, boxY, kWCLGInVoiceW, kWCLGInBoxH);
+	CGRect rightFrame = CGRectMake(barW - kWCLGInMargin - rightW, boxY, rightW, kWCLGInBoxH);
+	CGFloat textX = CGRectGetMaxX(voiceFrame) + kWCLGInGap;
+	CGFloat textW = CGRectGetMinX(rightFrame) - kWCLGInGap - textX;
+	if (textW < 60.0) textW = 60.0;
+	CGRect textFrame = CGRectMake(textX, boxY, textW, kWCLGInBoxH);
+
+	[CATransaction begin];
+	[CATransaction setDisableActions:YES];
+	voiceBox.frame = voiceFrame;
+	textBox.frame  = textFrame;
+	rightBox.frame = rightFrame;
+	[CATransaction commit];
+
+	// ---- 控件归位 ----
+	if (voice) WCLGMountInBox(voiceBox, voice, CGRectInset(voiceBox.contentView.bounds, 6.0, 6.0), 16.0);
+	if (textInput) {
+		// 输入框原来可能包着一层壳（白色圆角底），把壳的底色也清掉，只留我们的玻璃
+		UIView *wrap = textInput.superview;
+		if (wrap && wrap != bar && !CGRectIsEmpty(wrap.bounds)) {
+			wrap.backgroundColor = [UIColor clearColor];
+			wrap.opaque = NO;
+			wrap.layer.backgroundColor = [UIColor clearColor].CGColor;
+		}
+		WCLGMountInBox(textBox, textInput, CGRectInset(textBox.contentView.bounds, 8.0, 4.0), 18.0);
+	}
+	if (smiley && plus) {
+		CGFloat halfW = CGRectGetWidth(rightBox.contentView.bounds) / 2.0;
+		CGRect sf = CGRectMake(0.0, 0.0, halfW, CGRectGetHeight(rightBox.contentView.bounds));
+		CGRect pf = CGRectMake(halfW, 0.0, halfW, CGRectGetHeight(rightBox.contentView.bounds));
+		WCLGMountInBox(rightBox, smiley, CGRectInset(sf, 4.0, 4.0), 16.0);
+		WCLGMountInBox(rightBox, plus, CGRectInset(pf, 4.0, 4.0), 16.0);
+	} else if (smiley || plus) {
+		UIView *only = smiley ?: plus;
+		WCLGMountInBox(rightBox, only, CGRectInset(rightBox.contentView.bounds, 6.0, 6.0), 16.0);
+	}
+}
+
+%hook InputToolContainerView
+
+- (void)layoutSubviews {
+	%orig;
+	WCLGRedesignInputBar(self, self.window ?: self.superview);
+}
+
+%end
+
+%hook MMInputToolView
+
+- (void)layoutSubviews {
+	%orig;
+	// 有些时机只有外层会重排，这里再补一次（找到里面的输入条）
+	__block UIView *bar = nil;
+	NSInteger budget = 200;
+	bar = WCLGFindFirst(self, 0, &budget, ^BOOL(UIView *v) {
+		return [WCLGShortClass(v) containsString:@"InputToolContainerView"];
+	});
+	if (bar) WCLGRedesignInputBar(bar, self);
+}
+
+%end
+
+// ============================================================
+//  ★ 顶部校正（v3 失败的原因：钩错了类）
+//
+//  数据显示：navigationBar 是微信的 WCCustomNavigationBar (0,62 402x54)，
+//  子类重写了 layoutSubviews，所以在 UINavigationBar 上挂钩根本不会执行。
+//  这里同时钩子类与基类，规则很保守：
+//    · 只处理「类名像玻璃胶囊」的容器（Platter / Glass / Capsule）里的按钮 → 居中
+//    · 只把位于中间区域、且明显偏心（>1pt）的标题视图水平居中
+//    · **不改任何尺寸**，**不碰 searchBar / 表头 / tableView**（v3 就是动这些改坏的）
+// ============================================================
+static NSInteger WCLGTopFixMoves = 0;
+
+static BOOL WCLGIsGlassCapsule(UIView *v) {
+	NSString *cn = WCLGShortClass(v);
+	if (!cn) return NO;
+	return [cn containsString:@"Platter"] || [cn containsString:@"Glass"] ||
+		   [cn containsString:@"Capsule"];
+}
+
+static BOOL WCLGIsButtonLike(UIView *v) {
+	if ([v isKindOfClass:[UIButton class]]) return YES;
+	if ([v isKindOfClass:[UIBarButtonItem class]]) return NO;
+	NSString *cn = WCLGShortClass(v);
+	return cn && ([cn containsString:@"Button"] || [cn containsString:@"BarItem"]);
+}
+
+static void WCLGFixNavBarContent(UIView *root, NSInteger depth) {
+	if (!root || depth > 5) return;
+
+	for (UIView *sub in root.subviews) {
+		if (WCLGIsGlassCapsule(sub)) {
+			CGPoint want = CGPointMake(CGRectGetMidX(sub.bounds), CGRectGetMidY(sub.bounds));
+			for (UIView *inner in sub.subviews) {
+				if (!WCLGIsButtonLike(inner)) continue;
+				CGPoint c = inner.center;
+				if (fabs(c.x - want.x) < 0.5 && fabs(c.y - want.y) < 0.5) continue;
+				[CATransaction begin];
+				[CATransaction setDisableActions:YES];
+				inner.center = want;
+				[CATransaction commit];
+				WCLGTopFixMoves++;
+			}
+		}
+		// 标题：只在中间 60% 区域内、且偏心 > 1pt 时校正
+		NSString *cn = WCLGShortClass(sub);
+		BOOL titleLike = ([cn containsString:@"Title"] && ![cn containsString:@"Button"]) ||
+						 [sub isKindOfClass:[UILabel class]];
+		if (titleLike && root.bounds.size.width > 40.0) {
+			CGFloat W = CGRectGetWidth(root.bounds);
+			CGFloat midX = CGRectGetMidX(sub.frame);
+			if (midX > W * 0.2 && midX < W * 0.8 && fabs(midX - W * 0.5) > 1.0) {
+				[CATransaction begin];
+				[CATransaction setDisableActions:YES];
+				CGPoint c = sub.center;
+				c.x = W * 0.5;
+				sub.center = c;
+				[CATransaction commit];
+				WCLGTopFixMoves++;
+			}
+		}
+		WCLGFixNavBarContent(sub, depth + 1);
+	}
+}
+
+static void WCLGApplyTopFix(UINavigationBar *bar) {
+	if (!bar || !WCLGEnabled() || !WCLGTopFixEnabled()) return;
+	WCLGFixNavBarContent(bar, 0);
+}
+
 // ============================================================
 //  原版逻辑：让 UIKit 认为微信没申请旧版设计
 // ============================================================
@@ -432,7 +796,7 @@ static NSString *WCLGDeltaX(UIView *v) {
 	return [NSString stringWithFormat:@" Δx=%+.1f", d];
 }
 
-static void __attribute__((unused)) WCLGDumpTree(UIView *v, NSInteger depth, NSInteger maxDepth,
+static void WCLGDumpTree(UIView *v, NSInteger depth, NSInteger maxDepth,
 						 NSMutableString *out, NSString *indent, UIView *ref, BOOL withDelta) {
 	if (!v || depth > maxDepth || out.length > 6000) return;
 	[out appendFormat:@"%@%@ %@%@%@\n", indent, WCLGShortClass(v), WCLGFrameStr(v, ref),
@@ -508,7 +872,7 @@ static void WCLGCollectVCs(UIViewController *vc, NSMutableArray<UIViewController
 			WCLGCollectVCs(c, out, depth + 1);
 		}
 	}
-	for (UIViewController *c in vc.childViewControllers) {
+	for (UIViewController *c in vc.children) {
 		WCLGCollectVCs(c, out, depth + 1);
 	}
 }
@@ -583,6 +947,14 @@ static NSString *WCLGBuildReport(void) {
 		}
 	}
 	if (foundVC) {
+		// 输入栏内部结构（上次缺的就是这一层）
+		[o appendString:@"  — 输入栏子树（全层） —\n"];
+		WCLGDumpTree(foundBar, 0, 5, o, @"  ", foundBar, NO);
+		if (WCLGRedesignReport) {
+			[o appendFormat:@"  — 重做识别结果（第 %ld 次） —\n%@", (long)WCLGRedesignPasses, WCLGRedesignReport];
+		} else {
+			[o appendString:@"  — 重做未执行（没钩到/开关关） —\n"];
+		}
 		[o appendString:@"  — 下半屏视图树 —\n"];
 		WCLGDumpBottomHalf(foundVC.view, 0, 4, o, @"  ");
 	}
@@ -595,10 +967,17 @@ static NSString *WCLGBuildReport(void) {
 			if (c.navigationController.navigationBar) { nb = c.navigationController.navigationBar; break; }
 		}
 		if (nb) {
-			[o appendFormat:@"navigationBar %@ %@\n", WCLGShortClass(nb),
-				WCLGFrameStr(nb, WCLGKeyWindow())];
+			[o appendFormat:@"navigationBar %@ %@  顶部校正已移动 %ld 个视图\n", WCLGShortClass(nb),
+				WCLGFrameStr(nb, WCLGKeyWindow()), (long)WCLGTopFixMoves];
 			for (UIView *s in nb.subviews) {
 				[o appendFormat:@"  %@ %@%@\n", WCLGShortClass(s), WCLGFrameStr(s, nb), WCLGDeltaX(s)];
+			}
+			// ★ 实测缺口：按钮在 NavigationBarContentView 里，上次没往下 dump
+			for (UIView *s in nb.subviews) {
+				if ([WCLGShortClass(s) containsString:@"NavigationBarContentView"]) {
+					[o appendString:@"  — NavigationBarContentView 子树 —\n"];
+					WCLGDumpTree(s, 0, 3, o, @"    ", nb, YES);
+				}
 			}
 		} else {
 			[o appendString:@"navigationBar = nil\n"];
@@ -739,7 +1118,6 @@ static void WCLGInstallDiagGesture(void) {
 	WCLGDiagGestureInstalled = YES;
 }
 
-// 首次启动后自动弹一次（只一次）；窗口还没好就 4 秒后重试
 static void WCLGInstallDiagnostics(void) {
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)),
 				   dispatch_get_main_queue(), ^{
@@ -791,6 +1169,30 @@ static void WCLGInstallDiagnostics(void) {
 }
 
 
+
+%end
+
+
+%hook WCCustomNavigationBar
+
+- (void)layoutSubviews {
+	%orig;
+	WCLGApplyTopFix(self);
+}
+
+%end
+
+%hook UINavigationBar
+
+- (void)layoutSubviews {
+	%orig;
+	WCLGApplyTopFix(self);
+}
+
+- (void)didMoveToWindow {
+	%orig;
+	WCLGApplyTopFix(self);
+}
 
 %end
 
@@ -872,8 +1274,6 @@ static void WCLGInstallDiagnostics(void) {
 
 
 // ============================================================
-//  wczz 设置页对接（3 个开关）
-// ============================================================
 BOOL WCZZTabBarGlassEnabled(void) { return WCLGEnabled(); }
 void WCZZSetTabBarGlassEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGEnabledKey]; }
 
@@ -882,3 +1282,20 @@ void WCZZSetGlassDesignEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] 
 
 BOOL WCZZGlassInputEnabled(void) { return WCLGInputGlassEnabled(); }
 void WCZZSetGlassInputEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGInputGlassKey]; }
+
+
+// ============================================================
+//  wczz 设置页对接（6 个开关）
+// ============================================================
+BOOL WCZZTabBarGlassEnabled(void) { return WCLGEnabled(); }
+void WCZZSetTabBarGlassEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGEnabledKey]; }
+BOOL WCZZGlassDesignEnabled(void) { return WCLGDesignEnabled(); }
+void WCZZSetGlassDesignEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGDesignKey]; }
+BOOL WCZZGlassInputEnabled(void) { return WCLGInputGlassEnabled(); }
+void WCZZSetGlassInputEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGInputGlassKey]; }
+BOOL WCZZGlassTopFixEnabled(void) { return WCLGTopFixEnabled(); }
+void WCZZSetGlassTopFixEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGTopFixKey]; }
+BOOL WCZZGlassUnderlapEnabled(void) { return WCLGUnderlapEnabled(); }
+void WCZZSetGlassUnderlapEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGUnderlapKey]; }
+BOOL WCZZGlassRedesignEnabled(void) { return WCLGRedesignEnabled(); }
+void WCZZSetGlassRedesignEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGRedesignKey]; }

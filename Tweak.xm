@@ -13,6 +13,12 @@ BOOL WCZZGlassDesignEnabled(void);
 void WCZZSetGlassDesignEnabled(BOOL);
 BOOL WCZZGlassInputEnabled(void);
 void WCZZSetGlassInputEnabled(BOOL);
+BOOL WCZZGlassTopFixEnabled(void);
+void WCZZSetGlassTopFixEnabled(BOOL);
+BOOL WCZZGlassUnderlapEnabled(void);
+void WCZZSetGlassUnderlapEnabled(BOOL);
+BOOL WCZZGlassRedesignEnabled(void);
+void WCZZSetGlassRedesignEnabled(BOOL);
 BOOL WCZZTabBarGlassEnabled(void);
 void WCZZSetTabBarGlassEnabled(BOOL enabled);
 
@@ -135,7 +141,7 @@ static id WCZZValue(id obj, NSString *key) {
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
-    if (section == 2) return 3;
+    if (section == 2) return 6;
     return 1;
 }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section { return 28.0; }
@@ -170,8 +176,14 @@ static id WCZZValue(id obj, NSString *key) {
             c.textLabel.text=@"底栏液态玻璃"; sw.tag=300; sw.on=WCZZTabBarGlassEnabled();
         } else if (ip.row == 1) {
             c.textLabel.text=@"全局设计系统"; sw.tag=301; sw.on=WCZZGlassDesignEnabled();
-        } else {
+        } else if (ip.row == 2) {
             c.textLabel.text=@"输入框液态"; sw.tag=303; sw.on=WCZZGlassInputEnabled();
+        } else if (ip.row == 3) {
+            c.textLabel.text=@"顶部校正"; sw.tag=302; sw.on=WCZZGlassTopFixEnabled();
+        } else if (ip.row == 4) {
+            c.textLabel.text=@"内容滚入输入条"; sw.tag=304; sw.on=WCZZGlassUnderlapEnabled();
+        } else {
+            c.textLabel.text=@"重做输入栏布局"; sw.tag=305; sw.on=WCZZGlassRedesignEnabled();
         }
     }
     return c;
@@ -181,6 +193,9 @@ static id WCZZValue(id obj, NSString *key) {
     if (sw.tag == 300) { WCZZSetTabBarGlassEnabled(sw.on); [self.tableView reloadData]; }
     if (sw.tag == 301) { WCZZSetGlassDesignEnabled(sw.on); [self.tableView reloadData]; }
     if (sw.tag == 303) { WCZZSetGlassInputEnabled(sw.on); [self.tableView reloadData]; }
+    if (sw.tag == 302) { WCZZSetGlassTopFixEnabled(sw.on); [self.tableView reloadData]; }
+    if (sw.tag == 304) { WCZZSetGlassUnderlapEnabled(sw.on); [self.tableView reloadData]; }
+    if (sw.tag == 305) { WCZZSetGlassRedesignEnabled(sw.on); [self.tableView reloadData]; }
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
