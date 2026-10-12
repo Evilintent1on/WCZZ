@@ -432,7 +432,7 @@ static NSString *WCLGDeltaX(UIView *v) {
 	return [NSString stringWithFormat:@" Δx=%+.1f", d];
 }
 
-static void WCLGDumpTree(UIView *v, NSInteger depth, NSInteger maxDepth,
+static void __attribute__((unused)) WCLGDumpTree(UIView *v, NSInteger depth, NSInteger maxDepth,
 						 NSMutableString *out, NSString *indent, UIView *ref, BOOL withDelta) {
 	if (!v || depth > maxDepth || out.length > 6000) return;
 	[out appendFormat:@"%@%@ %@%@%@\n", indent, WCLGShortClass(v), WCLGFrameStr(v, ref),
