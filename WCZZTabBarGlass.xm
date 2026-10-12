@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 
 // ============================================================
 //  wctabbar v3 —— 在你原版基础上修 4 个问题 + 加输入框液态
@@ -187,7 +188,7 @@ static UIView *WCLGFindInputBar(UIView *root) {
 	return best;
 }
 
-static const void *kWCLGInputGlassKey = &kWCLGInputGlassKey;
+static const void *kWCLGInputGlassAssocKey = &kWCLGInputGlassAssocKey;
 
 static void WCLGApplyInputGlass(UIViewController *vc) {
 	if (!WCLGEnabled() || !WCLGInputGlassEnabled()) return;
@@ -197,7 +198,7 @@ static void WCLGApplyInputGlass(UIViewController *vc) {
 	if (!bar) return;
 	if (CGRectIsEmpty(bar.bounds)) return;          // 还没量好，等下一次布局
 
-	UIVisualEffectView *glass = objc_getAssociatedObject(bar, kWCLGInputGlassKey);
+	UIVisualEffectView *glass = objc_getAssociatedObject(bar, kWCLGInputGlassAssocKey);
 	if (!glass) {
 		glass = [[UIVisualEffectView alloc] initWithEffect:WCLGGlassEffect()];
 		glass.userInteractionEnabled = NO;
@@ -207,7 +208,7 @@ static void WCLGApplyInputGlass(UIViewController *vc) {
 		glass.layer.cornerCurve = kCACornerCurveContinuous;
 		glass.layer.masksToBounds = YES;
 		[bar insertSubview:glass atIndex:0];
-		objc_setAssociatedObject(bar, kWCLGInputGlassKey, glass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+		objc_setAssociatedObject(bar, kWCLGInputGlassAssocKey, glass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 		// 输入条自己让出底色，玻璃才看得见
 		bar.backgroundColor = [UIColor clearColor];
 		bar.opaque = NO;
@@ -266,7 +267,7 @@ static void WCLGStripTabBar(UITabBar *bar) {
 			if (g.backgroundColor && CGColorGetAlpha(g.backgroundColor.CGColor) > 0.01) {
 				g.backgroundColor = [UIColor clearColor];
 			}
-			if (g.layer.backgroundColor && CGColorGetAlpha(g.layer.backgroundColor.CGColor) > 0.01) {
+			if (g.layer.backgroundColor && CGColorGetAlpha(g.layer.backgroundColor) > 0.01) {
 				g.layer.backgroundColor = [UIColor clearColor].CGColor;
 			}
 		}
