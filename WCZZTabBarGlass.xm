@@ -21,7 +21,11 @@
 //    → 截图弹窗内容发我 → 改回 0
 // ============================================================
 
-#define WCLG_DIAG 1          // ← 1 = 内置诊断（首次启动后自动弹出一次 + 三指长按随时打开）；修完后改 0
+#define WCLG_DIAG 1
+
+// 前向声明（定义在后面）
+static NSString *WCLGShortClass(id obj);
+static BOOL WCLGViewTreeContains(UIView *v, NSInteger depth, BOOL (^pred)(UIView *));          // ← 1 = 内置诊断（首次启动后自动弹出一次 + 三指长按随时打开）；修完后改 0
 
 // ---------- 微信真实类 ----------
 @interface MMTabBar : UITabBar
@@ -796,20 +800,6 @@ static NSString *WCLGDeltaX(UIView *v) {
 	return [NSString stringWithFormat:@" Δx=%+.1f", d];
 }
 
-static NSString *WCLGShortClass(id obj) {
-	if (!obj) return @"(nil)";
-	return NSStringFromClass([obj class]);
-}
-
-static BOOL WCLGViewTreeContains(UIView *v, NSInteger depth, BOOL (^pred)(UIView *)) {
-	if (!v || depth > 20) return NO;
-	if (pred(v)) return YES;
-	for (UIView *sub in v.subviews) {
-		if (WCLGViewTreeContains(sub, depth + 1, pred)) return YES;
-	}
-	return NO;
-}
-
 static void WCLGDumpTree(UIView *v, NSInteger depth, NSInteger maxDepth,
 						 NSMutableString *out, NSString *indent, UIView *ref, BOOL withDelta) {
 	if (!v || depth > maxDepth || out.length > 6000) return;
@@ -1285,17 +1275,6 @@ static void WCLGInstallDiagnostics(void) {
 }
 
 %end
-
-
-// ============================================================
-BOOL WCZZTabBarGlassEnabled(void) { return WCLGEnabled(); }
-void WCZZSetTabBarGlassEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGEnabledKey]; }
-
-BOOL WCZZGlassDesignEnabled(void) { return WCLGDesignEnabled(); }
-void WCZZSetGlassDesignEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGDesignKey]; }
-
-BOOL WCZZGlassInputEnabled(void) { return WCLGInputGlassEnabled(); }
-void WCZZSetGlassInputEnabled(BOOL v) { [[NSUserDefaults standardUserDefaults] setBool:v forKey:kWCLGInputGlassKey]; }
 
 
 // ============================================================
