@@ -9,6 +9,10 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 
+// 底栏液态玻璃（WCZZTabBarGlass.xm）
+BOOL WCZZTabBarGlassEnabled(void);
+void WCZZSetTabBarGlassEnabled(BOOL enabled);
+
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <Foundation/Foundation.h>
@@ -137,16 +141,18 @@ static id WCZZValue(id obj, NSString *key) {
         self.view.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
     }
 }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 4; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
-    return section == 2 ? 11 : 1;
+    if (section == 2) return 11;
+    return 1;
 }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section { return 28.0; }
 - (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section { return section == 0 ? 8.0 : 0.01; }
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
     if (section == 0) return @"红包";
     if (section == 1) return @"消息";
-    return @"群助手";
+    if (section == 2) return @"群助手";
+    return @"外观";
 }
 - (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)section {
     return nil;   // 页脚会和最后一行重叠，说明文字放到行内了
@@ -215,11 +221,18 @@ static id WCZZValue(id obj, NSString *key) {
         UISwitch *sw=[UISwitch new]; sw.tag=206; sw.on=MMGroupUseOriginalEntry(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
         sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
+    } else if (ip.section == 3) {
+        c.textLabel.text=@"底栏液态玻璃"; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        c.detailTextLabel.text=WCZZTabBarGlassEnabled()?@"开":@"关";
+        UISwitch *sw=[UISwitch new]; sw.tag=300; sw.on=WCZZTabBarGlassEnabled(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
+        sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
+        [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     }
     return c;
 }
 - (void)wczzMain:(UISwitch *)sw {
     if (sw.tag == 100) WCZZSetBool(WCZZRedDetailKey, sw.on);
+    if (sw.tag == 300) { WCZZSetTabBarGlassEnabled(sw.on); [self.tableView reloadData]; }
     if (sw.tag == 200) { MMGroupSetEnabled(sw.on); [self.tableView reloadData]; }
     if (sw.tag == 201) { MMGroupSetShowHelper(sw.on); [self.tableView reloadData]; }
     if (sw.tag == 202) { MMGroupSetHelperTop(sw.on); [self.tableView reloadData]; }
