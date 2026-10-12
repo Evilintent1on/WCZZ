@@ -78,8 +78,11 @@ static NSString *HBString(id obj, NSArray<NSString *> *keys) {
     // 被排除的对象永远不折叠
     if ([[HBGroupConfig shared].exclusions containsObject:userName]) return NO;
 
-    if (chatMode) return [userName hasSuffix:@"@chatroom"];
-    return ![userName hasSuffix:@"@chatroom"];
+    // 只折叠已加入用户分组的会话：没建分组时不乱收
+    for (HBGroupItem *item in [[HBGroupConfig shared] groupsForChatMode:chatMode]) {
+        if ([item.members containsObject:userName]) return YES;
+    }
+    return NO;
 }
 
 + (NSString *)userNameOfSession:(id)session {
