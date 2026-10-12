@@ -6,9 +6,6 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 
-// 底栏液态玻璃（WCZZTabBarGlass.xm）
-BOOL WCZZTabBarGlassEnabled(void);
-void WCZZSetTabBarGlassEnabled(BOOL enabled);
 
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
@@ -126,7 +123,7 @@ static id WCZZValue(id obj, NSString *key) {
         self.view.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
     }
 }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 2; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
     return 1;
 }
@@ -134,8 +131,7 @@ static id WCZZValue(id obj, NSString *key) {
 - (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section { return section == 0 ? 8.0 : 0.01; }
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
     if (section == 0) return @"红包";
-    if (section == 1) return @"消息";
-    return @"外观";
+    return @"消息";
 }
 - (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)section {
     return nil;   // 页脚会和最后一行重叠，说明文字放到行内了
@@ -153,18 +149,11 @@ static id WCZZValue(id obj, NSString *key) {
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else if (ip.section == 1) {
         c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryNone;
-    } else if (ip.section == 2) {
-        c.textLabel.text=@"底栏液态玻璃"; c.selectionStyle=UITableViewCellSelectionStyleNone;
-        c.detailTextLabel.text=WCZZTabBarGlassEnabled()?@"开":@"关";
-        UISwitch *sw=[UISwitch new]; sw.tag=300; sw.on=WCZZTabBarGlassEnabled(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
-        sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
-        [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
-    }
+
     return c;
 }
 - (void)wczzMain:(UISwitch *)sw {
     if (sw.tag == 100) WCZZSetBool(WCZZRedDetailKey, sw.on);
-    if (sw.tag == 300) { WCZZSetTabBarGlassEnabled(sw.on); [self.tableView reloadData]; }
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
