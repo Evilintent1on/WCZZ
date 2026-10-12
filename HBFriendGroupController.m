@@ -104,7 +104,8 @@ static NSString *const kHBGroupCellID = @"HBGroupCell";
 
 - (BOOL)validAccount {
     NSString *current = [[HBGroupService shared] currentAccount];
-    if (!current.length) return NO;
+    // 拿不到账号时不阻塞（账号检查只是为了检测切号，拿不到就跳过）
+    if (!current.length) return YES;
     if (self.account.length && ![self.account isEqualToString:current]) return NO;
     self.account = current;
     return YES;
