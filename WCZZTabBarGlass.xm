@@ -16,6 +16,10 @@ static BOOL WCLGEnabled(void) {
 	return ([d objectForKey:kWCLGEnabledKey] == nil) ? YES : [d boolForKey:kWCLGEnabledKey];
 }
 
+// 前向声明（定义在后面）
+static void WCLGStripTabBar(UITabBar *bar);
+static void WCLGAlignTabBarItems(UITabBar *bar);
+
 // 供 wczz 设置页调用：切换开关后立即刷新底栏
 void WCZZSetTabBarGlassEnabled(BOOL enabled) {
 	[[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kWCLGEnabledKey];
@@ -45,10 +49,6 @@ static void WCLGRefreshWindow(UIView *v, NSInteger depth) {
 BOOL WCZZTabBarGlassEnabled(void) {
 	return WCLGEnabled();
 }
-
-// 前向声明（定义在后面）
-static void WCLGStripTabBar(UITabBar *bar);
-static void WCLGAlignTabBarItems(UITabBar *bar);
 
 // ============================================================
 //  关掉毛玻璃
@@ -145,7 +145,6 @@ static void WCLGStripTabBar(UITabBar *bar) {
 	WCLGKillBlur(bar, 0);
 }
 
-static void WCLGAlignTabBarItems(UITabBar *bar);   // 定义在后面
 
 // 微信会反复把底重画回来，延到下一个 runloop 再擦一遍。
 // 节流：微信一次会话能触发布局几百次，不节流的话主队列会堆满重复的块。
