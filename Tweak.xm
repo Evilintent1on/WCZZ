@@ -154,7 +154,7 @@ static id WCZZValue(id obj, NSString *key) {
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else if (ip.section == 1) {
         c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryNone;
-
+    }
     return c;
 }
 - (void)wczzMain:(UISwitch *)sw {
