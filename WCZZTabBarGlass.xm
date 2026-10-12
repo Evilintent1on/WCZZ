@@ -16,38 +16,12 @@ static BOOL WCLGEnabled(void) {
 	return ([d objectForKey:kWCLGEnabledKey] == nil) ? YES : [d boolForKey:kWCLGEnabledKey];
 }
 
-// 前向声明（定义在后面）
-static void WCLGStripTabBar(UITabBar *bar);
-static void WCLGAlignTabBarItems(UITabBar *bar);
-
-// 供 wczz 设置页调用：切换开关后立即刷新底栏
-void WCZZSetTabBarGlassEnabled(BOOL enabled) {
-	[[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kWCLGEnabledKey];
-	dispatch_async(dispatch_get_main_queue(), ^{
-		for (UIWindow *win in [UIApplication sharedApplication].windows) {
-			WCLGRefreshWindow(win, 0);
-		}
-	});
-}
-
-// 递归刷新窗口里的底栏（开→重擦重排，关→恢复系统默认）
-static void WCLGRefreshWindow(UIView *v, NSInteger depth) {
-	if (!v || depth > 12) return;
-	if ([v isKindOfClass:[UITabBar class]]) {
-		UITabBar *bar = (UITabBar *)v;
-		if (WCLGEnabled()) {
-			WCLGStripTabBar(bar);
-			WCLGAlignTabBarItems(bar);
-		} else {
-			// 关掉：触发一次布局让系统重画（appearance hook 会透传原值）
-			[bar setNeedsLayout];
-		}
-	}
-	for (UIView *sub in v.subviews) WCLGRefreshWindow(sub, depth + 1);
-}
-
 BOOL WCZZTabBarGlassEnabled(void) {
 	return WCLGEnabled();
+}
+
+void WCZZSetTabBarGlassEnabled(BOOL enabled) {
+	[[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kWCLGEnabledKey];
 }
 
 // ============================================================
@@ -63,8 +37,7 @@ static void WCLGKillBlur(UIView *v, NSInteger depth) {
 	// 没有边遍历边改的问题。copy 会在每个节点上多一次堆分配。
 	for (UIView *sub in v.subviews) {
 		if ([sub isKindOfClass:[UIVisualEffectView class]]) {
-			// 跳过我们自己的胶囊（tag 98765）
-			if (sub.tag == 98765) continue;
+			if (sub.tag == 98765) continue;  // 跳过自建胶囊
 			UIVisualEffectView *vev = (UIVisualEffectView *)sub;
 			vev.effect = nil;
 			vev.hidden = YES;
@@ -145,6 +118,7 @@ static void WCLGStripTabBar(UITabBar *bar) {
 	WCLGKillBlur(bar, 0);
 }
 
+static void WCLGAlignTabBarItems(UITabBar *bar);   // 定义在后面
 
 // 微信会反复把底重画回来，延到下一个 runloop 再擦一遍。
 // 节流：微信一次会话能触发布局几百次，不节流的话主队列会堆满重复的块。
@@ -169,51 +143,45 @@ static void WCLGStripTabBarDeferred(UITabBar *bar) {
 //  是按全宽均分的（0/105/210/315）。这里拿 platter 的 frame 当基准，
 //  把 item 视图重新摆到胶囊的网格上，并让内容垂直居中到胶囊。
 // ============================================================
-// 自建胶囊：不用系统浮动玻璃，自己垫一个 UIVisualEffectView（只动底部）
-static UIVisualEffectView *WCLGEnsureOurPlatter(UITabBar *bar) {
-	if (!bar) return nil;
-	// 找已有的（用 tag 标记，避免和系统视图混淆）
-	for (UIView *sub in bar.subviews) {
-		if ([sub isKindOfClass:[UIVisualEffectView class]] && sub.tag == 98765) {
-			return (UIVisualEffectView *)sub;
-		}
-	}
-	// 没有就造一个
-	UIVisualEffectView *platter = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterial]];
-	platter.tag = 98765;
-	platter.userInteractionEnabled = NO;
-	platter.layer.cornerRadius = 31.0;
-	platter.layer.masksToBounds = YES;
-	[bar insertSubview:platter atIndex:0];
-	return platter;
-}
-
 static void WCLGAlignTabBarItems(UITabBar *bar) {
 	if (!bar) return;
 
-	// 用自建胶囊（不再依赖系统 Platter）
-	UIVisualEffectView *platter = WCLGEnsureOurPlatter(bar);
-	if (!platter) return;
-
-	// 根据按钮位置摆胶囊：取所有 item 的并集，左右各扩 12，上下各扩 6
-	NSMutableArray<UIView *> *allItems = [NSMutableArray array];
+	// 找浮动胶囊（系统或我们自建的）
+	UIView *platter = nil;
 	for (UIView *sub in bar.subviews) {
 		NSString *cn = NSStringFromClass([sub class]);
-		if ([cn containsString:@"MMTabBarItemView"] || [cn containsString:@"TabBarButton"] || [cn containsString:@"_UITabButton"]) {
-			if (!sub.hidden) [allItems addObject:sub];
+		if ([cn containsString:@"Platter"] || (sub.tag == 98765)) {
+			platter = sub;
+			break;
 		}
 	}
-	if (allItems.count) {
+	// 没有就自建一个（纯底部方案：不用系统玻璃时自己造）
+	if (!platter && WCLGEnabled()) {
+		UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterial]];
+		v.tag = 98765;
+		v.userInteractionEnabled = NO;
+		v.layer.masksToBounds = YES;
+		[bar insertSubview:v atIndex:0];
+		platter = v;
+	}
+	if (!platter) return;
+
+	// 自建胶囊：先按按钮位置定 frame（左右扩 12，上下扩 6，圆角一半高度）
+	if (platter.tag == 98765) {
 		CGRect unionRect = CGRectNull;
-		for (UIView *iv in allItems) unionRect = CGRectUnion(unionRect, iv.frame);
-		if (!CGRectIsNull(unionRect)) {
-			CGRect pill = CGRectInset(unionRect, -12.0, -6.0);
-			// 限制在底栏内
-		pill = CGRectIntersection(pill, bar.bounds);
-		if (!CGRectIsNull(pill) && !CGRectIsEmpty(pill)) {
-			platter.frame = pill;
-			platter.layer.cornerRadius = CGRectGetHeight(pill) / 2.0;
+		for (UIView *sub in bar.subviews) {
+			NSString *cn2 = NSStringFromClass([sub class]);
+			if (([cn2 containsString:@"MMTabBarItemView"] || [cn2 containsString:@"TabBarButton"] || [cn2 containsString:@"_UITabButton"]) && !sub.hidden) {
+				unionRect = CGRectUnion(unionRect, sub.frame);
+			}
 		}
+		if (!CGRectIsNull(unionRect) && !CGRectIsEmpty(unionRect)) {
+			CGRect pill = CGRectInset(unionRect, -12.0, -6.0);
+			pill = CGRectIntersection(pill, bar.bounds);
+			if (!CGRectIsNull(pill) && !CGRectIsEmpty(pill)) {
+				platter.frame = pill;
+				platter.layer.cornerRadius = CGRectGetHeight(pill) / 2.0;
+			}
 		}
 	}
 
