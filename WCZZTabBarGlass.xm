@@ -1,31 +1,31 @@
-#import <UIKit/UIKit.h>
-
 // ============================================================
 //  wctabbar —— 只保留「底栏液态玻璃」，其他效果全部去除
 //
-//  保留（= 底栏效果本身）：
-//    · MMTabBar      擦掉微信画在底栏上的不透明底/毛玻璃，让系统原生浮动玻璃露出来
-//    · MMTabBar      把 MMTabBarItemView 对齐到系统胶囊（Platter）的网格上
-//    · MMTabBarController relayoutButtons: 之后补擦一次
-//
-//  保留但加了开关：
-//    · NSBundle 抹掉 UIDesignRequiresCompatibility —— 这是**底栏能变成浮动玻璃的前提**
-//      （微信 Info.plist 声明了退回旧设计，所以底栏才是全宽不透明）。关掉它底栏就没玻璃了，
-//      但顶部绝对不变。默认开。
-//
-//  去掉（原来会影响底部以外的地方）：
-//    · 原来把 UIKit.ScrollEdgeEffectView **每个实例**都强制隐藏 —— 顶部导航栏下方那条
-//      模糊/渐隐用的是同一个类，所以顶部也被改。现在只处理**底部那一条**（按位置判定），
-//      顶部完全放行。
-//    · 输入框玻璃、输入栏重做、顶部校正、诊断 —— 全部删除。
+//  本文件由你桌面那份 Tweak.xm 直接生成，只做了四处改动：
+//    ① 滚动边缘效果：原来把 UIKit.ScrollEdgeEffectView 的**每个实例**都强制隐藏，
+//       而顶部导航栏下方那条模糊用的是同一个类 → 顶部也被改。
+//       现在只处理**底部那一条**（按位置判定），顶部实例原样放行。
+//    ② 加了三个开关（总开关 / 设计系统 / 底部边缘效果）+ 两个对齐微调量。
+//    ③ NSBundle 那两个方法受「设计系统」开关控制（它是底栏玻璃的前提，默认保留）。
+//    ④ 对齐逻辑：加入 extraX / extraY 微调；item 没有可见子视图时直接把整个 item 居中到胶囊。
 //
 //  开关（NSUserDefaults，实时生效）：
-//    wclg_native_tabbar_enabled  总开关           默认开
-//    wclg_ios26_design           设计系统开关      默认开（底栏玻璃的前提）
-//    wclg_hide_bottom_edge       底部边缘效果      默认开（只关底部那一条，不碰顶部）
+//    wclg_native_tabbar_enabled   总开关          默认开
+//    wclg_ios26_design            设计系统         默认开（底栏浮动玻璃的前提）
+//    wclg_hide_bottom_edge        底部边缘效果     默认开（只关底部那一条，顶部不受影响）
+//    wclg_dock_extra_x / _y       图标对齐微调     默认 0（正值 = 右 / 下），改完立即生效
+//
+//  对齐逻辑要点（与原版一致 + 微调）：
+//    · platter 运行时按类名找（含 "Platter"），不写死内缩量 → 系统改数值/换机型/横竖屏都跟得上
+//    · item 先按 x 排序再排布，避免 subviews 顺序变化导致错乱
+//    · 偏差 < 0.5pt 直接跳过，避免每帧写 frame 引起抖动
+//    · 垂直：取 item 内「可见子视图」的包围盒，把它的中心对齐到胶囊中心（再叠加 extraY）
 // ============================================================
 
+#import <UIKit/UIKit.h>
+
 // ---------- 微信真实类 ----------
+// 如实声明继承关系，编译器才知道它们是系统类的子类
 @interface MMTabBar : UITabBar
 @end
 
@@ -36,6 +36,16 @@
 static NSString *const kWCLGEnabledKey    = @"wclg_native_tabbar_enabled";
 static NSString *const kWCLGDesignKey     = @"wclg_ios26_design";
 static NSString *const kWCLGBottomEdgeKey = @"wclg_hide_bottom_edge";
+
+// ---------- 对齐微调 ----------
+//  默认 0 = 不加偏移（与之前行为一致）。两种改法：
+//    ① 编译期：改下面两个常量  ② 运行期：NSUserDefaults 覆盖（立即生效，不用重编译）
+//       wclg_dock_extra_y = -2.5   → 图标整体上移 2.5pt
+//       wclg_dock_extra_x =  1.0   → 图标整体右移 1pt
+static CGFloat const kWCLGDockExtraX = 0.0;      // ← 这里也能改
+static CGFloat const kWCLGDockExtraY = 0.0;      // ← 这里也能改
+static NSString *const kWCLGExtraXKey = @"wclg_dock_extra_x";
+static NSString *const kWCLGExtraYKey = @"wclg_dock_extra_y";
 
 static BOOL WCLGFlag(NSString *key, BOOL fallback) {
 	NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
@@ -55,11 +65,27 @@ static BOOL WCLGEnabled(void) {
 static BOOL WCLGDesignEnabled(void) { return WCLGFlag(kWCLGDesignKey, YES); }
 static BOOL WCLGBottomEdgeEnabled(void) { return WCLGFlag(kWCLGBottomEdgeKey, YES); }
 
+static CGFloat WCLGDockExtraX(void) {
+	id v = [[NSUserDefaults standardUserDefaults] objectForKey:kWCLGExtraXKey];
+	return v ? (CGFloat)[v doubleValue] : kWCLGDockExtraX;
+}
+
+static CGFloat WCLGDockExtraY(void) {
+	id v = [[NSUserDefaults standardUserDefaults] objectForKey:kWCLGExtraYKey];
+	return v ? (CGFloat)[v doubleValue] : kWCLGDockExtraY;
+}
+
 // ============================================================
-//  关掉毛玻璃（只作用于底栏，天然不影响别处）
+//  关掉毛玻璃
+//
+//  只设 hidden 不够 —— 微信会在自己的 layout 里把容器改回可见。
+//  直接让 UIVisualEffectView 没有 effect，它就没东西可渲染。
+//  浮动胶囊的玻璃走的是 ClearGlassView/SDF，不是 UIVisualEffectView，不受影响。
 // ============================================================
 static void WCLGKillBlur(UIView *v, NSInteger depth) {
 	if (depth > 10) return;
+	// 直接遍历，不 copy —— 这里只改 effect/hidden，不增删子视图，
+	// 没有边遍历边改的问题。copy 会在每个节点上多一次堆分配。
 	for (UIView *sub in v.subviews) {
 		if ([sub isKindOfClass:[UIVisualEffectView class]]) {
 			UIVisualEffectView *vev = (UIVisualEffectView *)sub;
@@ -70,6 +96,17 @@ static void WCLGKillBlur(UIView *v, NSInteger depth) {
 		WCLGKillBlur(sub, depth + 1);
 	}
 }
+
+// ============================================================
+//  关掉 iOS 26 的滚动边缘效果
+//
+//  UIKit.ScrollEdgeEffectView 是系统给可滚动内容下边缘加的模糊/渐隐，让内容滚到
+//  浮动底栏底下时柔化过渡。底栏一透明它就露出来了（实测位于 {0,782},{420,130}，
+//  正好压在底栏 y=822..912 下面）。
+//
+//  唯一手段是下面的类级 hook —— 树遍历设 hidden 打不赢，UIKit 会在自己的
+//  layout 里重新显示（实测反复触发 184 次仍是 hidden=0），已弃用。
+// ============================================================
 
 // ============================================================
 //  擦掉微信画在底栏上的东西
@@ -99,7 +136,8 @@ static void WCLGStripTabBar(UITabBar *bar) {
 			continue;
 		}
 		// 跟底栏一样大的容器 = 微信的底。frame 也必须是满的 ——
-		// bounds 满尺寸但 frame 为 0×0 的是 portal 源视图，藏了会毁掉玻璃折射。
+		// bounds 满尺寸但 frame 为 0×0 的是 portal 源视图（挂在屏幕外给
+		// _UIPortalView 采样用），藏了会毁掉玻璃折射。
 		BOOL fullSize = CGRectGetWidth(sub.bounds) >= bw - 1.0 &&
 						CGRectGetHeight(sub.bounds) >= bh - 1.0 &&
 						CGRectGetWidth(sub.frame) > 1.0 &&
@@ -151,8 +189,9 @@ static void WCLGStripTabBarDeferred(UITabBar *bar) {
 // ============================================================
 //  对齐图标
 //
-//  系统的浮动胶囊是内缩的，而微信的 MMTabBarItemView 是按全宽均分的。
-//  这里拿 platter 的 frame 当基准，把 item 视图摆到胶囊的网格上，并让内容垂直居中到胶囊。
+//  系统的浮动胶囊是内缩的（如 {21,7},{378,62}），而微信的 MMTabBarItemView
+//  是按全宽均分的（0/105/210/315）。这里拿 platter 的 frame 当基准，
+//  把 item 视图重新摆到胶囊的网格上，并让内容垂直居中到胶囊。
 // ============================================================
 static void WCLGAlignTabBarItems(UITabBar *bar) {
 	if (!bar) return;
@@ -185,6 +224,9 @@ static void WCLGAlignTabBarItems(UITabBar *bar) {
 
 	CGRect pf = platter.frame;
 	CGFloat n = (CGFloat)items.count;
+	CGFloat extraX = WCLGDockExtraX();        // 对齐微调（默认 0）
+	CGFloat extraY = WCLGDockExtraY();
+	CGFloat platterMidY = CGRectGetMidY(pf);
 
 	[CATransaction begin];
 	[CATransaction setDisableActions:YES];
@@ -192,10 +234,10 @@ static void WCLGAlignTabBarItems(UITabBar *bar) {
 		UIView *iv = items[i];
 		CGPoint c = iv.center;
 
-		// 水平：摆到胶囊的网格上
-		c.x = pf.origin.x + pf.size.width * ((CGFloat)i + 0.5) / n;
+		// 水平：摆到胶囊的网格上（胶囊运行时找，不写死内缩量）
+		c.x = pf.origin.x + pf.size.width * ((CGFloat)i + 0.5) / n + extraX;
 
-		// 垂直：让 item 内容的中心落在胶囊中心
+		// 垂直：取 item 内「可见子视图」的实际包围盒，把它的中心对齐到胶囊中心
 		CGRect content = CGRectNull;
 		for (UIView *g in iv.subviews) {
 			if (g.hidden) continue;
@@ -203,10 +245,13 @@ static void WCLGAlignTabBarItems(UITabBar *bar) {
 		}
 		if (!CGRectIsNull(content)) {
 			CGFloat contentMidYInBar = iv.frame.origin.y + CGRectGetMidY(content);
-			c.y += CGRectGetMidY(pf) - contentMidYInBar;
+			c.y += platterMidY - contentMidYInBar + extraY;
+		} else {
+			c.y = platterMidY + extraY;       // 没有可见子视图：整个 item 居中到胶囊
 		}
 
-		// 位置已经对了就别写 —— 无条件写 frame 会让 UIKit 标记重新布局，反过来又触发 layoutSubviews
+		// 位置已经对了就别写 —— 无条件写 frame 会让 UIKit 标记重新布局，
+		// 反过来又触发 layoutSubviews，白白多跑一轮
 		if (fabs(iv.center.x - c.x) < 0.5 && fabs(iv.center.y - c.y) < 0.5) continue;
 		iv.center = c;
 	}
@@ -214,13 +259,11 @@ static void WCLGAlignTabBarItems(UITabBar *bar) {
 }
 
 // ============================================================
-//  让 UIKit 认为微信没申请旧版设计
+//  关键：让 UIKit 认为微信没申请旧版设计
 //
 //  微信 Info.plist 里有 UIDesignRequiresCompatibility = true，这是它底栏是
-//  「全宽不透明」而不是 iOS 26 浮动玻璃的根本原因。UIKit 走 NSBundle 读这个 key，这里把它屏蔽掉。
-//
-//  注意：这条是**应用级**的（顶部也会跟着走新设计）。它是底栏玻璃的前提，
-//  所以默认保留；不想要的话把 wclg_ios26_design 关掉（底栏也会回到原来的全宽底）。
+//  「全宽不透明」而不是 iOS 26 浮动玻璃的根本原因（它用 iphoneos26.1 SDK 构建，
+//  却主动退回了旧设计系统）。UIKit 走 NSBundle 读这个 key，这里把它屏蔽掉。
 // ============================================================
 static BOOL WCLGIsMainBundle(NSBundle *b) {
 	return b == [NSBundle mainBundle];
@@ -250,13 +293,12 @@ static BOOL WCLGIsMainBundle(NSBundle *b) {
 %end
 
 // ============================================================
-//  滚动边缘效果：**只关底部那一条**
+//  从类上强制关掉滚动边缘效果
 //
-//  原版把 UIKit.ScrollEdgeEffectView 的每个实例都强制隐藏 —— 顶部导航栏下方那条
-//  模糊/渐隐用的是同一个类，所以顶部也被一起改掉了。
-//  现在按位置区分：只有落在屏幕下方 45% 的实例才处理，顶部实例原样放行。
-//  （它属于底栏区域的效果，所以默认开；不想要把 wclg_hide_bottom_edge 关掉。）
+//  这是 Swift 类：UIKit.ScrollEdgeEffectView（内部类 _TtCC5UIKit20...BackdropView）。
+//  树遍历会被 UIKit 反复重置，所以 setHidden: 直接强制成 YES，谁设都无效。
 // ============================================================
+// ★ 改动：原版对每个实例都强制隐藏（顶部那条也被关掉）。现在只处理底部那一条。
 static BOOL WCLGIsBottomEdgeView(UIView *v) {
 	if (![v isKindOfClass:[UIView class]]) return NO;
 
@@ -272,7 +314,7 @@ static BOOL WCLGIsBottomEdgeView(UIView *v) {
 	}
 	CGFloat h = CGRectGetHeight(ref.bounds);
 	if (h <= 0) return NO;
-	return CGRectGetMidY(r) > h * 0.55;
+	return CGRectGetMidY(r) > h * 0.55;    // 只看屏幕下方 45%
 }
 
 static void (*wclg_orig_SEV_setHidden)(id, SEL, BOOL);
@@ -299,7 +341,7 @@ static void WCLGHookScrollEdgeEffectView(void) {
 
 	Class c = NSClassFromString(@"UIKit.ScrollEdgeEffectView");
 	if (!c) c = objc_getClass("_TtC5UIKit20ScrollEdgeEffectView");
-	if (!c) return;   // 解析不到就算了，不影响底栏其它逻辑
+	if (!c) return;   // 解析不到就只靠树遍历兜底，不影响其他功能
 
 	MSHookMessageEx(c, @selector(setHidden:),
 		(IMP)wclg_SEV_setHidden, (IMP *)&wclg_orig_SEV_setHidden);
@@ -312,7 +354,7 @@ static void WCLGHookScrollEdgeEffectView(void) {
 }
 
 // ============================================================
-//  底栏
+//  Hook
 // ============================================================
 %hook MMTabBar
 
