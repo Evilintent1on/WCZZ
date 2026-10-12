@@ -453,9 +453,9 @@ static const void *kRightBoxKey = &kRightBoxKey;
 // 把某个控件放进盒子里并铺开（控件自己仍响应事件）
 static void WCLGMountInBox(UIView *box, UIView *control, CGRect frame, CGFloat radius) {
 	if (!box || !control) return;
-	if (control.superview != box.contentView) {      // 注意：控件最终挂在 box.contentView 上
+	if (control.superview != box) {      // 注意：控件最终挂在 box.contentView 上
 		[control removeFromSuperview];
-		[box.contentView addSubview:control];        // 放 contentView 里，玻璃才在它后面
+		[box addSubview:control];        // 放 contentView 里，玻璃才在它后面
 		control.translatesAutoresizingMaskIntoConstraints = YES;
 		control.autoresizingMask = UIViewAutoresizingNone;
 	}
@@ -796,6 +796,20 @@ static NSString *WCLGDeltaX(UIView *v) {
 	return [NSString stringWithFormat:@" Δx=%+.1f", d];
 }
 
+static NSString *WCLGShortClass(id obj) {
+	if (!obj) return @"(nil)";
+	return NSStringFromClass([obj class]);
+}
+
+static BOOL WCLGViewTreeContains(UIView *v, NSInteger depth, BOOL (^pred)(UIView *)) {
+	if (!v || depth > 20) return NO;
+	if (pred(v)) return YES;
+	for (UIView *sub in v.subviews) {
+		if (WCLGViewTreeContains(sub, depth + 1, pred)) return YES;
+	}
+	return NO;
+}
+
 static void WCLGDumpTree(UIView *v, NSInteger depth, NSInteger maxDepth,
 						 NSMutableString *out, NSString *indent, UIView *ref, BOOL withDelta) {
 	if (!v || depth > maxDepth || out.length > 6000) return;
@@ -872,7 +886,7 @@ static void WCLGCollectVCs(UIViewController *vc, NSMutableArray<UIViewController
 			WCLGCollectVCs(c, out, depth + 1);
 		}
 	}
-	for (UIViewController *c in vc.children) {
+	for (UIViewController *c in vc.childViewControllers) {
 		WCLGCollectVCs(c, out, depth + 1);
 	}
 }
