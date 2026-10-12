@@ -45,28 +45,37 @@ typedef struct {
     void *original;
 } HBHookEntry;
 
-/// 挂一个实例方法；类不存在就跳过
-static void HBHookClass(const char *className, const char *selectorName, IMP replacement, void **original) {
-    if (!className || !selectorName || !replacement) return;
+/// 挂一个实例方法；类不存在就跳过，返回是否成功
+static BOOL HBHookClass(const char *className, const char *selectorName, IMP replacement, void **original) {
+    if (!className || !selectorName || !replacement) return NO;
+    // 如果已经 hook 过，跳过（original 非空表示已安装）
+    if (original && *(IMP *)original) return YES;
     Class cls = objc_getClass(className);
-    if (!cls) return;
+    if (!cls) return NO;
     SEL sel = sel_registerName(selectorName);
     Method method = class_getInstanceMethod(cls, sel);
-    if (!method) return;
+    if (!method) return NO;
     MSHookMessageEx(cls, sel, replacement, (IMP *)original);
+    return YES;
 }
 
-/// 挂一个类方法（走 metaclass）
-static void HBHookMetaClass(const char *className, const char *selectorName, IMP replacement, void **original) {
-    if (!className || !selectorName || !replacement) return;
+/// 挂一个类方法（走 metaclass），返回是否成功
+static BOOL HBHookMetaClass(const char *className, const char *selectorName, IMP replacement, void **original) {
+    if (!className || !selectorName || !replacement) return NO;
+    if (original && *(IMP *)original) return YES;
     Class cls = objc_getClass(className);
-    if (!cls) return;
+    if (!cls) return NO;
     Class meta = object_getClass(cls);
     SEL sel = sel_registerName(selectorName);
     Method method = class_getClassMethod(cls, sel);
-    if (!method) return;
+    if (!method) return NO;
     MSHookMessageEx(meta, sel, replacement, (IMP *)original);
+    return YES;
 }
+
+static NSInteger HBHookRetryCount = 0;
+
+static void HBInstallHooks(void);
 
 #pragma mark - MainSessionMgr
 
@@ -287,31 +296,48 @@ static void hb_mainFrameViewDidAppear(id self, SEL _cmd, BOOL animated) {
 __attribute__((constructor)) static void HBGroupInit(void) {
     // 配置先加载
     [[HBGroupConfig shared] reload];
+    // 延迟安装：constructor 跑时微信类可能还没加载完，失败则重试
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        HBInstallHooks();
+    });
+}
+
+static void HBInstallHooks(void) {
+    BOOL ok = YES;
 
     // 会话列表数据源
-    HBHookMetaClass("MainSessionMgr", "rebuildMainSessions", (IMP)hb_rebuildMainSessions, (void **)&orig_rebuildMainSessions);
-    HBHookMetaClass("MainSessionMgr", "setVisibleUnreadSlienceChatSessionCount:", (IMP)hb_setVisibleUnreadSlienceChatSessionCount, (void **)&orig_setVisibleUnread);
-    HBHookMetaClass("MainSessionMgr", "getNormalSessionAtIndex:fulFilled:", (IMP)hb_getNormalSessionAtIndex, (void **)&orig_getNormalSessionAtIndex);
-    HBHookMetaClass("MainSessionMgr", "getTopSessionAtIndex:fulFilled:", (IMP)hb_getTopSessionAtIndex, (void **)&orig_getTopSessionAtIndex);
+    ok &= HBHookMetaClass("MainSessionMgr", "rebuildMainSessions", (IMP)hb_rebuildMainSessions, (void **)&orig_rebuildMainSessions);
+    ok &= HBHookMetaClass("MainSessionMgr", "setVisibleUnreadSlienceChatSessionCount:", (IMP)hb_setVisibleUnreadSlienceChatSessionCount, (void **)&orig_setVisibleUnread);
+    ok &= HBHookMetaClass("MainSessionMgr", "getNormalSessionAtIndex:fulFilled:", (IMP)hb_getNormalSessionAtIndex, (void **)&orig_getNormalSessionAtIndex);
+    ok &= HBHookMetaClass("MainSessionMgr", "getTopSessionAtIndex:fulFilled:", (IMP)hb_getTopSessionAtIndex, (void **)&orig_getTopSessionAtIndex);
     // 原版这两个是挂在 MainFrameLogicController 的元类上
-    HBHookMetaClass("MainFrameLogicController", "getLastFrontSessionArray", (IMP)hb_getLastFrontSessionArray, (void **)&orig_getLastFrontSessionArray);
-    HBHookMetaClass("MainFrameLogicController", "getCellDataAtIndexPath:", (IMP)hb_getCellDataAtIndexPath, (void **)&orig_getCellDataAtIndexPath);
+    ok &= HBHookMetaClass("MainFrameLogicController", "getLastFrontSessionArray", (IMP)hb_getLastFrontSessionArray, (void **)&orig_getLastFrontSessionArray);
+    ok &= HBHookMetaClass("MainFrameLogicController", "getCellDataAtIndexPath:", (IMP)hb_getCellDataAtIndexPath, (void **)&orig_getCellDataAtIndexPath);
     // 旧版微信这几个在 MainSessionMgr 上，一并挂上做兼容
     HBHookMetaClass("MainSessionMgr", "getLastFrontSessionArray", (IMP)hb_getLastFrontSessionArray, (void **)&orig_getLastFrontSessionArray);
     HBHookMetaClass("MainSessionMgr", "getCellDataAtIndexPath:", (IMP)hb_getCellDataAtIndexPath, (void **)&orig_getCellDataAtIndexPath);
 
     // 首页
-    HBHookClass("NewMainFrameViewController", "tableView:cellForRowAtIndexPath:", (IMP)hb_tableCellForRow, (void **)&orig_tableCellForRow);
-    HBHookClass("NewMainFrameViewController", "tableView:heightForRowAtIndexPath:", (IMP)hb_tableHeightForRow, (void **)&orig_tableHeightForRow);
-    HBHookClass("NewMainFrameViewController", "tableView:canEditRowAtIndexPath:", (IMP)hb_canEditRow, (void **)&orig_canEditRow);
-    HBHookClass("NewMainFrameViewController", "handleSelectIndexPath:tableView:", (IMP)hb_handleSelectIndexPath, (void **)&orig_handleSelectIndexPath);
-    HBHookClass("NewMainFrameViewController", "viewDidAppear:", (IMP)hb_mainFrameViewDidAppear, (void **)&orig_mainFrameViewDidAppear);
+    ok &= HBHookClass("NewMainFrameViewController", "tableView:cellForRowAtIndexPath:", (IMP)hb_tableCellForRow, (void **)&orig_tableCellForRow);
+    ok &= HBHookClass("NewMainFrameViewController", "tableView:heightForRowAtIndexPath:", (IMP)hb_tableHeightForRow, (void **)&orig_tableHeightForRow);
+    ok &= HBHookClass("NewMainFrameViewController", "tableView:canEditRowAtIndexPath:", (IMP)hb_canEditRow, (void **)&orig_canEditRow);
+    ok &= HBHookClass("NewMainFrameViewController", "handleSelectIndexPath:tableView:", (IMP)hb_handleSelectIndexPath, (void **)&orig_handleSelectIndexPath);
+    ok &= HBHookClass("NewMainFrameViewController", "viewDidAppear:", (IMP)hb_mainFrameViewDidAppear, (void **)&orig_mainFrameViewDidAppear);
 
-    // 选群界面
+    // 选群界面（可选，失败不重试）
     HBHookClass("SessionSelectController", "viewWillAppear:", (IMP)hb_selectViewWillAppear, (void **)&orig_selectViewWillAppear);
     HBHookClass("SessionSelectController", "layoutSubviews", (IMP)hb_selectLayoutSubviews, (void **)&orig_selectLayoutSubviews);
     HBHookClass("SessionSelectController", "viewWillDisappear:", (IMP)hb_selectViewWillDisappear, (void **)&orig_selectViewWillDisappear);
 
-    // 头像
+    // 头像（可选，失败不重试）
     HBHookClass("MMHeadImageView", "checkAndUpdateImage", (IMP)hb_checkAndUpdateImage, (void **)&orig_checkAndUpdateImage);
+
+    // 核心 hook 没装上就重试（最多 60 次，约 45 秒）
+    if (!ok && HBHookRetryCount++ < 60) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            HBInstallHooks();
+        });
+    }
 }
