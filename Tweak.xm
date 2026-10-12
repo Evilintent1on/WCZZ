@@ -170,7 +170,6 @@ static id WCZZValue(id obj, NSString *key) {
 - (void)wczzMain:(UISwitch *)sw {
     if (sw.tag == 100) WCZZSetBool(WCZZRedDetailKey, sw.on);
     if (sw.tag == 300) { WCZZSetTabBarGlassEnabled(sw.on); [self.tableView reloadData]; }
-    if (sw.tag == 301) { WCZZSetGlassDesignEnabled(sw.on); [self.tableView reloadData]; }
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
