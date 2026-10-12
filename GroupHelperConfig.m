@@ -294,7 +294,9 @@ void MMGroupSetUseNativePicker(BOOL useNative) {
 
 BOOL MMGroupUseOriginalEntry(void) {
     id value = [[NSUserDefaults standardUserDefaults] objectForKey:MMGroupOriginalEntryKey];
-    return value ? [value boolValue] : YES;     // 默认开：原版是 push 一个新的会话列表页
+    // 默认关：原版是 push 一个新的会话列表页，但裸实例在 8.0.79 上没有返回按钮、
+    // 带着搜索框、且要等微信自己准备好 —— 实测不可用，故默认用原地切换（可见行为一致）。
+    return value ? [value boolValue] : NO;
 }
 
 void MMGroupSetUseOriginalEntry(BOOL original) {

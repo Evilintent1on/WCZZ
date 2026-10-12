@@ -21,6 +21,8 @@
 - (void)wczzGroupSetInside:(BOOL)inside;
 - (void)wczzGroupExitInside;
 - (void)wczzGroupPushRoomHelper;
+- (void)wczzGroupApplyInsideChrome;
+- (void)wczzGroupRestoreSearchBar;
 @property (nonatomic, assign) BOOL inRoomList;   // MiYou 注入的同名属性
 @end
 
@@ -792,9 +794,22 @@ static BOOL WCZZGroupIsHelperIndexPath(id mainFrame, id indexPath) {
     return MMGroupIsHelperSession(MMGroupUserNameOfSession(WCZZGroupSessionAtIndexPath(mainFrame, indexPath)));
 }
 
+// 组内视图：把会话列表顶部的搜索框藏起来（MiYou 的组内页面没有搜索框），退出时还原
+static UISearchBar *WCZZGroupFindSearchBar(UIView *root, NSInteger depth) {
+    if (!root || depth > 12) return nil;
+    if ([root isKindOfClass:[UISearchBar class]]) return (UISearchBar *)root;
+    for (UIView *sub in root.subviews) {
+        UISearchBar *found = WCZZGroupFindSearchBar(sub, depth + 1);
+        if (found) return found;
+    }
+    return nil;
+}
+
 // associated object keys（标题 / 左侧按钮，进入组内视图时保存原值）
 static const void *WCZZGroupTitleKey = &WCZZGroupTitleKey;
 static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
+static const void *WCZZGroupSearchBarKey = &WCZZGroupSearchBarKey;
+static const void *WCZZGroupSearchContainerKey = &WCZZGroupSearchContainerKey;
 
 %group WCZZGroupHooks
 
@@ -882,7 +897,7 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
             MMGroupLog(@"push 失败，退回原地切换: %@", exception);
         }
     }
-    // 回退：原地切换（标题 + 自建返回项）
+    // 原地切换（标题 + 返回 + 藏搜索框）
     @try {
         [self setValue:MMGroupHelperTitle() forKey:@"m_nsTitle"];
         [self setValue:@(YES) forKey:@"inRoomList"];
@@ -891,11 +906,51 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
                              OBJC_ASSOCIATION_COPY_NONATOMIC);
     objc_setAssociatedObject(self, WCZZGroupLeftItemKey, self.navigationItem.leftBarButtonItem,
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    self.navigationItem.title = MMGroupHelperTitle();
-    self.navigationItem.leftBarButtonItem =
-        [[UIBarButtonItem alloc] initWithTitle:@"返回" style:UIBarButtonItemStylePlain
-                                        target:self action:@selector(wczzGroupExitInside)];
+    [self wczzGroupApplyInsideChrome];
     MMGroupForceReloadSessions();
+    // 微信可能会在之后重设导航栏/搜索框，过一小会儿再压一次
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [self wczzGroupApplyInsideChrome];
+    });
+}
+
+%new
+- (void)wczzGroupApplyInsideChrome {
+    self.navigationItem.title = MMGroupHelperTitle();
+    self.navigationItem.hidesBackButton = NO;
+    UINavigationController *nav = self.navigationController;
+    BOOL pushedPage = nav && nav.viewControllers.count > 1 && nav.viewControllers.firstObject != self;
+    if (!self.navigationItem.leftBarButtonItem ||
+        ![self.navigationItem.leftBarButtonItem.target isEqual:self]) {
+        self.navigationItem.leftBarButtonItem =
+            [[UIBarButtonItem alloc] initWithTitle:@"返回" style:UIBarButtonItemStylePlain
+                                            target:self action:@selector(wczzGroupExitInside)];
+    }
+    if (pushedPage) return;
+
+    // 原地模式：藏掉搜索框（保存原状态，退出时还原）
+    UISearchBar *bar = WCZZGroupFindSearchBar(self.view, 0);
+    if (bar && !bar.hidden) {
+        objc_setAssociatedObject(self, WCZZGroupSearchBarKey, bar, OBJC_ASSOCIATION_ASSIGN);
+        bar.hidden = YES;
+        UIView *container = bar.superview;
+        if (container && container != self.view) {
+            objc_setAssociatedObject(self, WCZZGroupSearchContainerKey, container, OBJC_ASSOCIATION_ASSIGN);
+            container.hidden = YES;
+        }
+        MMGroupLog(@"组内视图：已隐藏搜索框");
+    }
+}
+
+%new
+- (void)wczzGroupRestoreSearchBar {
+    UIView *container = objc_getAssociatedObject(self, WCZZGroupSearchContainerKey);
+    UISearchBar *bar = objc_getAssociatedObject(self, WCZZGroupSearchBarKey);
+    if (container) container.hidden = NO;
+    if (bar) bar.hidden = NO;
+    objc_setAssociatedObject(self, WCZZGroupSearchContainerKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    objc_setAssociatedObject(self, WCZZGroupSearchBarKey, nil, OBJC_ASSOCIATION_ASSIGN);
 }
 
 %new
@@ -920,6 +975,7 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
     NSString *title = objc_getAssociatedObject(self, WCZZGroupTitleKey);
     self.navigationItem.title = title.length ? title : @"微信";
     self.navigationItem.leftBarButtonItem = objc_getAssociatedObject(self, WCZZGroupLeftItemKey);
+    [self wczzGroupRestoreSearchBar];
     MMGroupForceReloadSessions();
 }
 
@@ -945,19 +1001,11 @@ static const void *WCZZGroupLeftItemKey = &WCZZGroupLeftItemKey;
     if (!MMGroupIsEnabled()) return;
     if (MMGroupIsInsideHelper()) {
         @try { [self setValue:MMGroupHelperTitle() forKey:@"m_nsTitle"]; } @catch (__unused NSException *e) {}
-        self.navigationItem.title = MMGroupHelperTitle();
-        UINavigationController *nav = self.navigationController;
-        BOOL pushedPage = nav && nav.viewControllers.count > 1 && nav.viewControllers.firstObject != self;
-        if (pushedPage) {
-            // 微信主界面自己会设左按钮/隐藏返回，这里强制保证有「返回」
-            self.navigationItem.hidesBackButton = NO;
-            if (!self.navigationItem.leftBarButtonItem ||
-                ![self.navigationItem.leftBarButtonItem.target isEqual:self]) {
-                self.navigationItem.leftBarButtonItem =
-                    [[UIBarButtonItem alloc] initWithTitle:@"返回" style:UIBarButtonItemStylePlain
-                                                    target:self action:@selector(wczzGroupExitInside)];
-            }
-        }
+        [self wczzGroupApplyInsideChrome];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            [self wczzGroupApplyInsideChrome];
+        });
     }
     MMGroupForceReloadSessions();
 }
@@ -1257,6 +1305,13 @@ static void WCZZInstallHooksWhenReady(void) {
             %init(WCZZGroupHooks);
             WCZZGroupHooksStarted = YES;
             WCZZLog(@"group hooks installed");
+            // 钩子装好立刻压几次刷新，避免「进微信要等一会才出现群助手」
+            for (double delay in @[@0.1, @0.6, @1.6]) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                               dispatch_get_main_queue(), ^{
+                    MMGroupForceReloadSessions();
+                });
+            }
         }
         MMGroupInstallSessionListHook();
         // 微信列表实际读的是主界面的行缓存 → 必须在视图层也做一次映射
