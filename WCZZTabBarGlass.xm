@@ -151,10 +151,10 @@ static void WCLGClearBackdrop(UIView *bar, UIView *root) {
 	CGFloat bw = CGRectGetWidth(bar.bounds), bh = CGRectGetHeight(bar.bounds);
 	for (UIView *g in bar.subviews) {
 		if ([g isKindOfClass:[UIVisualEffectView class]]) continue;
-		if (g.backgroundColor && CGColorGetAlpha(g.backgroundColor.CGColor) > 0.01) {
+		if (g.backgroundColor && CGColorGetAlpha(g.backgroundColor) > 0.01) {
 			g.backgroundColor = [UIColor clearColor];
 		}
-		if (g.layer.backgroundColor && CGColorGetAlpha(g.layer.backgroundColor.CGColor) > 0.01) {
+		if (g.layer.backgroundColor && CGColorGetAlpha(g.layer.backgroundColor) > 0.01) {
 			g.layer.backgroundColor = [UIColor clearColor].CGColor;
 		}
 		g.opaque = NO;
@@ -167,10 +167,10 @@ static void WCLGClearBackdrop(UIView *bar, UIView *root) {
 		CGRect sr = [sup convertRect:sup.bounds toView:root];
 		CGFloat barH = CGRectGetHeight([bar convertRect:bar.bounds toView:root]);
 		if (CGRectGetHeight(sr) > barH * 2.5) break;      // 太大 → 不是壳，别清
-		if (sup.backgroundColor && CGColorGetAlpha(sup.backgroundColor.CGColor) > 0.01) {
+		if (sup.backgroundColor && CGColorGetAlpha(sup.backgroundColor) > 0.01) {
 			sup.backgroundColor = [UIColor clearColor];
 		}
-		if (sup.layer.backgroundColor && CGColorGetAlpha(sup.layer.backgroundColor.CGColor) > 0.01) {
+		if (sup.layer.backgroundColor && CGColorGetAlpha(sup.layer.backgroundColor) > 0.01) {
 			sup.layer.backgroundColor = [UIColor clearColor].CGColor;
 		}
 		sup.opaque = NO;
@@ -190,7 +190,7 @@ static void WCLGApplyInputGlass(UIViewController *vc) {
 	if (!bar || CGRectIsEmpty(bar.bounds)) return;
 
 	// 已经加过就只更新 frame
-	UIVisualEffectView *glass = objc_getAssociatedObject(bar, kWCLGInputGlassKey);
+	UIVisualEffectView *glass = objc_getAssociatedObject(bar, kWCLGInputGlassAssocKey);
 	if (!glass) {
 		glass = [[UIVisualEffectView alloc] initWithEffect:WCLGGlassEffect()];
 		glass.userInteractionEnabled = NO;
@@ -255,10 +255,10 @@ static void WCLGStripTabBar(UITabBar *bar) {
 				((UIVisualEffectView *)g).effect = nil;
 			}
 			g.opaque = NO;
-			if (g.backgroundColor && CGColorGetAlpha(g.backgroundColor.CGColor) > 0.01) {
+			if (g.backgroundColor && CGColorGetAlpha(g.backgroundColor) > 0.01) {
 				g.backgroundColor = [UIColor clearColor];
 			}
-			if (g.layer.backgroundColor && CGColorGetAlpha(g.layer.backgroundColor.CGColor) > 0.01) {
+			if (g.layer.backgroundColor && CGColorGetAlpha(g.layer.backgroundColor) > 0.01) {
 				g.layer.backgroundColor = [UIColor clearColor].CGColor;
 			}
 		}
@@ -579,7 +579,7 @@ static NSString *WCLGBuildReport(void) {
 			p = p.superview;
 			[o appendFormat:@"  父%d %@ %@ bg=%@\n", (int)i + 1, WCLGShortClass(p),
 				WCLGFrameStr(p, foundVC.view),
-				p.backgroundColor ? [NSString stringWithFormat:@"a=%.2f", CGColorGetAlpha(p.backgroundColor.CGColor)] : @"nil"];
+				p.backgroundColor ? [NSString stringWithFormat:@"a=%.2f", CGColorGetAlpha(p.backgroundColor)] : @"nil"];
 		}
 	}
 	if (foundVC) {
