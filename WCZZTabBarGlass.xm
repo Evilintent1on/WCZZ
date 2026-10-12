@@ -12,16 +12,13 @@
 static NSString *const kWCLGEnabledKey = @"wclg_native_tabbar_enabled";
 
 static BOOL WCLGEnabled(void) {
-	NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-	return ([d objectForKey:kWCLGEnabledKey] == nil) ? YES : [d boolForKey:kWCLGEnabledKey];
-}
-
-BOOL WCZZTabBarGlassEnabled(void) {
-	return WCLGEnabled();
-}
-
-void WCZZSetTabBarGlassEnabled(BOOL enabled) {
-	[[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kWCLGEnabledKey];
+	static BOOL cached;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+		cached = ([d objectForKey:kWCLGEnabledKey] == nil) ? YES : [d boolForKey:kWCLGEnabledKey];
+	});
+	return cached;
 }
 
 // ============================================================
@@ -37,7 +34,6 @@ static void WCLGKillBlur(UIView *v, NSInteger depth) {
 	// 没有边遍历边改的问题。copy 会在每个节点上多一次堆分配。
 	for (UIView *sub in v.subviews) {
 		if ([sub isKindOfClass:[UIVisualEffectView class]]) {
-			if (sub.tag == 98765) continue;  // 跳过自建胶囊
 			UIVisualEffectView *vev = (UIVisualEffectView *)sub;
 			vev.effect = nil;
 			vev.hidden = YES;
@@ -146,44 +142,15 @@ static void WCLGStripTabBarDeferred(UITabBar *bar) {
 static void WCLGAlignTabBarItems(UITabBar *bar) {
 	if (!bar) return;
 
-	// 找浮动胶囊（系统或我们自建的）
+	// 找浮动胶囊
 	UIView *platter = nil;
 	for (UIView *sub in bar.subviews) {
-		NSString *cn = NSStringFromClass([sub class]);
-		if ([cn containsString:@"Platter"] || (sub.tag == 98765)) {
+		if ([NSStringFromClass([sub class]) containsString:@"Platter"]) {
 			platter = sub;
 			break;
 		}
 	}
-	// 没有就自建一个（纯底部方案：不用系统玻璃时自己造）
-	if (!platter && WCLGEnabled()) {
-		UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterial]];
-		v.tag = 98765;
-		v.userInteractionEnabled = NO;
-		v.layer.masksToBounds = YES;
-		[bar insertSubview:v atIndex:0];
-		platter = v;
-	}
 	if (!platter) return;
-
-	// 自建胶囊：先按按钮位置定 frame（左右扩 12，上下扩 6，圆角一半高度）
-	if (platter.tag == 98765) {
-		CGRect unionRect = CGRectNull;
-		for (UIView *sub in bar.subviews) {
-			NSString *cn2 = NSStringFromClass([sub class]);
-			if (([cn2 containsString:@"MMTabBarItemView"] || [cn2 containsString:@"TabBarButton"] || [cn2 containsString:@"_UITabButton"]) && !sub.hidden) {
-				unionRect = CGRectUnion(unionRect, sub.frame);
-			}
-		}
-		if (!CGRectIsNull(unionRect) && !CGRectIsEmpty(unionRect)) {
-			CGRect pill = CGRectInset(unionRect, -12.0, -6.0);
-			pill = CGRectIntersection(pill, bar.bounds);
-			if (!CGRectIsNull(pill) && !CGRectIsEmpty(pill)) {
-				platter.frame = pill;
-				platter.layer.cornerRadius = CGRectGetHeight(pill) / 2.0;
-			}
-		}
-	}
 
 	// 收集微信自己的 item 视图
 	NSMutableArray<UIView *> *items = [NSMutableArray array];
@@ -232,6 +199,37 @@ static void WCLGAlignTabBarItems(UITabBar *bar) {
 	[CATransaction commit];
 }
 
+// ============================================================
+//  关键：让 UIKit 认为微信没申请旧版设计
+//
+//  微信 Info.plist 里有 UIDesignRequiresCompatibility = true，这是它底栏是
+//  「全宽不透明」而不是 iOS 26 浮动玻璃的根本原因（它用 iphoneos26.1 SDK 构建，
+//  却主动退回了旧设计系统）。UIKit 走 NSBundle 读这个 key，这里把它屏蔽掉。
+// ============================================================
+static BOOL WCLGIsMainBundle(NSBundle *b) {
+	return b == [NSBundle mainBundle];
+}
+
+%hook NSBundle
+
+- (id)objectForInfoDictionaryKey:(NSString *)key {
+	if (WCLGIsMainBundle(self) && [key isEqualToString:@"UIDesignRequiresCompatibility"]) {
+		return @NO;
+	}
+	return %orig;
+}
+
+- (NSDictionary *)infoDictionary {
+	NSDictionary *d = %orig;
+	if (WCLGIsMainBundle(self) && d[@"UIDesignRequiresCompatibility"] != nil) {
+		NSMutableDictionary *m = [d mutableCopy];
+		[m removeObjectForKey:@"UIDesignRequiresCompatibility"];
+		return m;
+	}
+	return d;
+}
+
+%end
 
 // ============================================================
 //  从类上强制关掉滚动边缘效果
@@ -348,3 +346,14 @@ static void WCLGHookScrollEdgeEffectView(void) {
 }
 
 %end
+
+// ============================================================
+//  wczz 设置页对接（加在原版末尾，原有代码一字未动）
+// ============================================================
+BOOL WCZZTabBarGlassEnabled(void) {
+	return WCLGEnabled();
+}
+
+void WCZZSetTabBarGlassEnabled(BOOL enabled) {
+	[[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kWCLGEnabledKey];
+}
