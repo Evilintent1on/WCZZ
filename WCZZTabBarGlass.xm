@@ -1,300 +1,383 @@
-// wctabbar —— 只改底部 dock 版（在逆向还原源码基础上修改）
-//
-// 与原版的差别（本次修改的全部内容）：
-//   1) 新增 WCLGIsDockView()：**每个钩子先判断「我是不是底部 dock」**，不是底部的
-//      （尤其是顶部导航栏用的那个 ScrollEdgeEffectView）原样透传 → 顶部完全不动。
-//   2) 删掉原版的 -objectForInfoDictionaryKey:@"UIDesignRequiresCompatibility" 伪造。
-//      那个键是**全局**设计语言开关，改成 @NO 会让整个 App（含顶部）换外观；
-//      要「只动底部」就必须放弃它。
-//   3) 类解析候选顺序改为「底栏优先」：MMTabBar / WCTabBar / MMTabBarController → UITabBar
-//      → iOS 26 的 ScrollEdgeEffectView（该类与顶部共用，靠 WCLGIsDockView() 区分）。
-//
-// 安装方式与原版二进制一致：C 函数实现 + MSHookMessageEx（不是 %hook 语法糖），
-// 因为原版就是运行期解析类名后手动安装的。
-//
-// 判定「底部 dock」的三重依据（任一成立）：
-//   a. 自身类名含 "TabBar"；
-//   b. 祖先链含 "TabBar"/"MMTabBarController"，或父视图/祖先的兄弟里有底栏按钮关键字；
-//   c. 几何兜底：位于窗口纵向 62% 以下、且高度 < 窗口高度 25%（顶部效果条不满足）。
-
 #import <UIKit/UIKit.h>
-#import <QuartzCore/QuartzCore.h>
-#import <objc/runtime.h>
-#import <substrate.h>
 
+// ---------- 微信真实类 ----------
+// 如实声明继承关系，编译器才知道它们是系统类的子类
+@interface MMTabBar : UITabBar
+@end
+
+@interface MMTabBarController : UITabBarController
+@end
+
+// ---------- 开关 ----------
 static NSString *const kWCLGEnabledKey = @"wclg_native_tabbar_enabled";
 
-static NSArray<NSString *> *WCLGTabButtonKeywords(void) {
-    return @[@"TabBarButton", @"MMTabBarItemView", @"_UITabButton", @"ItemView"];
-}
-static NSArray<NSString *> *WCLGPlatterKeywords(void) {
-    return @[@"Platter", @"LiquidLens", @"Container"];
+static BOOL WCLGEnabled(void) {
+	NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+	return ([d objectForKey:kWCLGEnabledKey] == nil) ? YES : [d boolForKey:kWCLGEnabledKey];
 }
 
-static BOOL WCLGClassHas(id obj, NSArray<NSString *> *keywords) {
-    if (!obj) return NO;
-    NSString *cls = NSStringFromClass([obj class]);
-    if (!cls) return NO;
-    for (NSString *kw in keywords) {
-        if ([cls containsString:kw]) return YES;
-    }
-    return NO;
+// 供 wczz 设置页调用：切换开关后立即刷新底栏
+void WCZZSetTabBarGlassEnabled(BOOL enabled) {
+	[[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kWCLGEnabledKey];
+	dispatch_async(dispatch_get_main_queue(), ^{
+		for (UIWindow *win in [UIApplication sharedApplication].windows) {
+			WCLGRefreshWindow(win, 0);
+		}
+	});
 }
 
-#pragma mark - ★ 底部 dock 判定（决定「动不动顶部」的唯一开关）
-
-static BOOL WCLGIsDockView(UIView *v) {
-    if (![v isKindOfClass:[UIView class]]) return NO;
-
-    // a. 自己就是底栏
-    NSString *cls = NSStringFromClass([v class]);
-    if ([cls containsString:@"TabBar"]) return YES;
-
-    // b. 祖先链 / 兄弟视图里有底栏特征
-    UIView *parent = v.superview;
-    for (UIView *p = parent; p; p = p.superview) {
-        NSString *pc = NSStringFromClass([p class]);
-        if ([pc containsString:@"TabBar"] || [pc containsString:@"MMTabBarController"]) return YES;
-        for (UIView *sib in p.subviews) {
-            if (sib != v && WCLGClassHas(sib, WCLGTabButtonKeywords())) return YES;
-        }
-    }
-    for (UIView *sib in parent.subviews) {
-        if (sib != v && WCLGClassHas(sib, WCLGTabButtonKeywords())) return YES;
-    }
-
-    // c. 几何兜底：屏幕下方的一条矮条 → 底部 dock（顶部效果条会被排除）
-    UIWindow *win = v.window;
-    if (win && CGRectGetHeight(win.bounds) > 0) {
-        CGRect r = [v convertRect:v.bounds toView:win];
-        CGFloat winH = CGRectGetHeight(win.bounds);
-        if (CGRectGetMidY(r) > winH * 0.62 && CGRectGetHeight(r) < winH * 0.25) return YES;
-    }
-    return NO;
+// 递归刷新窗口里的底栏（开→重擦重排，关→恢复系统默认）
+static void WCLGRefreshWindow(UIView *v, NSInteger depth) {
+	if (!v || depth > 12) return;
+	if ([v isKindOfClass:[UITabBar class]]) {
+		UITabBar *bar = (UITabBar *)v;
+		if (WCLGEnabled()) {
+			WCLGStripTabBar(bar);
+			WCLGAlignTabBarItems(bar);
+		} else {
+			// 关掉：触发一次布局让系统重画（appearance hook 会透传原值）
+			[bar setNeedsLayout];
+		}
+	}
+	for (UIView *sub in v.subviews) WCLGRefreshWindow(sub, depth + 1);
 }
-
-static BOOL WCLGEnabledForView(UIView *v) {
-    if (![[NSUserDefaults standardUserDefaults] boolForKey:kWCLGEnabledKey]) return NO;
-    return WCLGIsDockView(v);           // ← 顶部在这里被挡掉
-}
-
-#pragma mark - 几何 / 层级工具
-
-static NSArray<UIView *> *WCLGSortedTabButtons(UIView *bar) {
-    NSMutableArray<UIView *> *out = [NSMutableArray array];
-    for (UIView *sub in bar.subviews) {
-        if (sub.hidden) continue;
-        if (WCLGClassHas(sub, WCLGTabButtonKeywords())) [out addObject:sub];
-    }
-    [out sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
-        CGFloat ax = CGRectGetMinX(a.frame), bx = CGRectGetMinX(b.frame);
-        if (ax < bx) return NSOrderedAscending;
-        if (ax > bx) return NSOrderedDescending;
-        return NSOrderedSame;
-    }];
-    return out;
-}
-
-static CGRect WCLGUnionRect(NSArray<UIView *> *buttons) {
-    CGRect r = CGRectNull;
-    for (UIView *b in buttons) {
-        r = CGRectIsNull(r) ? b.frame : CGRectUnion(r, b.frame);
-    }
-    return r;
-}
-
-static UIView *WCLGExistingPlatter(UIView *bar) {
-    for (UIView *sub in bar.subviews) {
-        if (WCLGClassHas(sub, WCLGPlatterKeywords())) return sub;
-    }
-    return nil;
-}
-
-static void WCLGRemovePlatters(UIView *bar) {
-    for (UIView *sub in [bar.subviews copy]) {
-        if (WCLGClassHas(sub, WCLGPlatterKeywords())) [sub removeFromSuperview];
-    }
-}
-
-#pragma mark - 钩子实现（C 函数 + 保存的原实现指针，与原版二进制一致）
-
-static void (*orig_setHidden)(id, SEL, BOOL);
-static void (*orig_setStandardAppearance)(id, SEL, id);
-static void (*orig_setScrollEdgeAppearance)(id, SEL, id);
-static void (*orig_setBackgroundImage)(id, SEL, id);
-static void (*orig_setShadowImage)(id, SEL, id);
-static void (*orig_setBarTintColor)(id, SEL, id);
-static void (*orig_setBackgroundColor)(id, SEL, id);
-static void (*orig_layoutSubviews)(id, SEL);
-static void (*orig_didAddSubview)(id, SEL, UIView *);
-static void (*orig_didMoveToWindow)(id, SEL);
-static void (*orig_didMoveToSuperview)(id, SEL);
-
-static void wclg_setHidden(id self, SEL _cmd, BOOL hidden) {
-    if (orig_setHidden) orig_setHidden(self, _cmd, hidden);
-    if (!WCLGEnabledForView(self)) WCLGRemovePlatters(self);   // 关掉时不残留
-}
-
-static void wclg_setStandardAppearance(id self, SEL _cmd, id appearance) {
-    if (WCLGEnabledForView(self)) {
-        if (orig_setStandardAppearance) orig_setStandardAppearance(self, _cmd, nil);
-        return;
-    }
-    if (orig_setStandardAppearance) orig_setStandardAppearance(self, _cmd, appearance);
-}
-
-static void wclg_setScrollEdgeAppearance(id self, SEL _cmd, id appearance) {
-    if (WCLGEnabledForView(self)) {
-        if (orig_setScrollEdgeAppearance) orig_setScrollEdgeAppearance(self, _cmd, nil);
-        return;
-    }
-    if (orig_setScrollEdgeAppearance) orig_setScrollEdgeAppearance(self, _cmd, appearance);
-}
-
-static void wclg_setBackgroundImage(id self, SEL _cmd, id image) {
-    if (orig_setBackgroundImage) {
-        orig_setBackgroundImage(self, _cmd, WCLGEnabledForView(self) ? nil : image);
-    }
-}
-
-static void wclg_setShadowImage(id self, SEL _cmd, id image) {
-    if (orig_setShadowImage) {
-        orig_setShadowImage(self, _cmd, WCLGEnabledForView(self) ? nil : image);
-    }
-}
-
-static void wclg_setBarTintColor(id self, SEL _cmd, id color) {
-    if (orig_setBarTintColor) {
-        orig_setBarTintColor(self, _cmd, WCLGEnabledForView(self) ? [UIColor clearColor] : color);
-    }
-}
-
-static void wclg_setBackgroundColor(id self, SEL _cmd, id color) {
-    if (orig_setBackgroundColor) {
-        orig_setBackgroundColor(self, _cmd, WCLGEnabledForView(self) ? [UIColor clearColor] : color);
-    }
-}
-
-// 核心：只在底部 dock 上造浮动胶囊
-static void wclg_layoutSubviews(id self, SEL _cmd) {
-    if (orig_layoutSubviews) orig_layoutSubviews(self, _cmd);
-    if (!WCLGEnabledForView(self)) return;              // 顶部 / 其它位置：原样
-
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-
-    NSArray<UIView *> *buttons = WCLGSortedTabButtons(self);
-    if (buttons.count == 0) {
-        [CATransaction commit];
-        return;
-    }
-    CGRect pill = CGRectInset(WCLGUnionRect(buttons), -12.0, -6.0);
-
-    UIView *platter = WCLGExistingPlatter(self);
-    if (!platter) {
-        UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:nil];
-        v.userInteractionEnabled = NO;
-        v.opaque = NO;
-        v.backgroundColor = [UIColor clearColor];
-        [self insertSubview:v atIndex:0];
-        platter = v;
-    }
-    if ([platter isKindOfClass:[UIVisualEffectView class]]) {
-        [(UIVisualEffectView *)platter setEffect:
-            [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterial]];
-    }
-    platter.frame = pill;
-    platter.center = CGPointMake(CGRectGetMidX(pill), CGRectGetMidY(pill));
-    platter.layer.cornerRadius = CGRectGetHeight(pill) / 2.0;
-    platter.layer.masksToBounds = YES;
-    platter.hidden = NO;
-
-    for (UIView *b in buttons) {
-        b.backgroundColor = [UIColor clearColor];
-        [self bringSubviewToFront:b];
-    }
-    [CATransaction commit];
-}
-
-static void wclg_didAddSubview(id self, SEL _cmd, UIView *subview) {
-    if (orig_didAddSubview) orig_didAddSubview(self, _cmd, subview);
-    if (WCLGEnabledForView(self)) [self setNeedsLayout];
-}
-
-static void wclg_didMoveToWindow(id self, SEL _cmd) {
-    if (orig_didMoveToWindow) orig_didMoveToWindow(self, _cmd);
-    if (!WCLGEnabledForView(self)) return;
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    [self setNeedsLayout];
-    [self layoutIfNeeded];
-    [CATransaction commit];
-}
-
-static void wclg_didMoveToSuperview(id self, SEL _cmd) {
-    if (orig_didMoveToSuperview) orig_didMoveToSuperview(self, _cmd);
-    if (!WCLGEnabledForView(self)) WCLGRemovePlatters(self);
-}
-
-#pragma mark - 安装（候选顺序：底栏优先）
-
-static void WCLGInstallHooks(void) {
-    static BOOL installed = false;
-    if (installed) return;
-    installed = true;
-
-    Class target = objc_getClass("MMTabBar");
-    if (!target) target = objc_getClass("WCTabBar");
-    if (!target) target = NSClassFromString(@"MMTabBarController");
-    if (!target) target = objc_getClass("UITabBar");
-    // iOS 26：底栏效果视图与顶部共用同一个类 → 靠 WCLGIsDockView() 区分，钩子仍可安装
-    if (!target) target = NSClassFromString(@"UIKit.ScrollEdgeEffectView");
-    if (!target) target = objc_getClass("_TtC5UIKit20ScrollEdgeEffectView");
-    if (!target) return;
-
-    MSHookMessageEx(target, @selector(setHidden:),               (IMP)&wclg_setHidden,               (IMP *)&orig_setHidden);
-    MSHookMessageEx(target, @selector(setStandardAppearance:),   (IMP)&wclg_setStandardAppearance,   (IMP *)&orig_setStandardAppearance);
-    MSHookMessageEx(target, @selector(setScrollEdgeAppearance:), (IMP)&wclg_setScrollEdgeAppearance, (IMP *)&orig_setScrollEdgeAppearance);
-    MSHookMessageEx(target, @selector(setBackgroundImage:),      (IMP)&wclg_setBackgroundImage,      (IMP *)&orig_setBackgroundImage);
-    MSHookMessageEx(target, @selector(setShadowImage:),          (IMP)&wclg_setShadowImage,          (IMP *)&orig_setShadowImage);
-    MSHookMessageEx(target, @selector(setBarTintColor:),         (IMP)&wclg_setBarTintColor,         (IMP *)&orig_setBarTintColor);
-    MSHookMessageEx(target, @selector(setBackgroundColor:),      (IMP)&wclg_setBackgroundColor,      (IMP *)&orig_setBackgroundColor);
-    MSHookMessageEx(target, @selector(layoutSubviews),           (IMP)&wclg_layoutSubviews,          (IMP *)&orig_layoutSubviews);
-    MSHookMessageEx(target, @selector(didAddSubview:),           (IMP)&wclg_didAddSubview,           (IMP *)&orig_didAddSubview);
-    MSHookMessageEx(target, @selector(didMoveToWindow),          (IMP)&wclg_didMoveToWindow,          (IMP *)&orig_didMoveToWindow);
-    MSHookMessageEx(target, @selector(didMoveToSuperview),       (IMP)&wclg_didMoveToSuperview,       (IMP *)&orig_didMoveToSuperview);
-    // 故意不装 -objectForInfoDictionaryKey:（原版用它伪造 UIDesignRequiresCompatibility，
-    // 那是全局设计开关，会连顶部一起改）。
-}
-
-#pragma mark - 开关（供 wczz 设置页调用）
 
 BOOL WCZZTabBarGlassEnabled(void) {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:kWCLGEnabledKey];
+	return WCLGEnabled();
 }
 
-// 找到所有底部 dock 视图，开关切换后立即刷新（开→造胶囊，关→拆胶囊）
-static void WCLGRefreshDockInView(UIView *root) {
-    if (!root) return;
-    if (WCLGIsDockView(root)) {
-        if (WCZZTabBarGlassEnabled()) {
-            [root setNeedsLayout];
-        } else {
-            WCLGRemovePlatters(root);
-        }
-    }
-    for (UIView *sub in root.subviews) WCLGRefreshDockInView(sub);
+// 前向声明（定义在后面）
+static void WCLGStripTabBar(UITabBar *bar);
+static void WCLGAlignTabBarItems(UITabBar *bar);
+
+// ============================================================
+//  关掉毛玻璃
+//
+//  只设 hidden 不够 —— 微信会在自己的 layout 里把容器改回可见。
+//  直接让 UIVisualEffectView 没有 effect，它就没东西可渲染。
+//  浮动胶囊的玻璃走的是 ClearGlassView/SDF，不是 UIVisualEffectView，不受影响。
+// ============================================================
+static void WCLGKillBlur(UIView *v, NSInteger depth) {
+	if (depth > 10) return;
+	// 直接遍历，不 copy —— 这里只改 effect/hidden，不增删子视图，
+	// 没有边遍历边改的问题。copy 会在每个节点上多一次堆分配。
+	for (UIView *sub in v.subviews) {
+		if ([sub isKindOfClass:[UIVisualEffectView class]]) {
+			// 跳过我们自己的胶囊（tag 98765）
+			if (sub.tag == 98765) continue;
+			UIVisualEffectView *vev = (UIVisualEffectView *)sub;
+			vev.effect = nil;
+			vev.hidden = YES;
+			continue;
+		}
+		WCLGKillBlur(sub, depth + 1);
+	}
 }
 
-void WCZZSetTabBarGlassEnabled(BOOL enabled) {
-    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kWCLGEnabledKey];
-    dispatch_async(dispatch_get_main_queue(), ^{
-        for (UIWindow *win in [UIApplication sharedApplication].windows) {
-            WCLGRefreshDockInView(win);
-        }
-    });
+// ============================================================
+//  关掉 iOS 26 的滚动边缘效果
+//
+//  UIKit.ScrollEdgeEffectView 是系统给可滚动内容下边缘加的模糊/渐隐，让内容滚到
+//  浮动底栏底下时柔化过渡。底栏一透明它就露出来了（实测位于 {0,782},{420,130}，
+//  正好压在底栏 y=822..912 下面）。
+//
+//  唯一手段是下面的类级 hook —— 树遍历设 hidden 打不赢，UIKit 会在自己的
+//  layout 里重新显示（实测反复触发 184 次仍是 hidden=0），已弃用。
+// ============================================================
+
+// ============================================================
+//  擦掉微信画在底栏上的东西
+// ============================================================
+static void WCLGStripTabBar(UITabBar *bar) {
+	if (!bar || ![bar isKindOfClass:[UITabBar class]]) return;
+
+	[CATransaction begin];
+	[CATransaction setDisableActions:YES];
+
+	// ① 底栏自己那层底
+	bar.translucent = YES;
+	bar.opaque = NO;
+	bar.backgroundColor = [UIColor clearColor];
+	bar.layer.backgroundColor = [UIColor clearColor].CGColor;
+
+	// ② 微信塞的全尺寸背景容器：直接藏掉，光清颜色会被它重画回来
+	CGFloat bw = CGRectGetWidth(bar.bounds), bh = CGRectGetHeight(bar.bounds);
+	for (UIView *sub in bar.subviews) {
+		NSString *cn = NSStringFromClass([sub class]);
+		if ([cn containsString:@"Platter"] ||
+			[cn containsString:@"LiquidLens"] ||
+			[cn containsString:@"TabBarButton"] ||
+			[cn containsString:@"ItemView"] ||
+			[cn containsString:@"Container"] ||
+			[cn containsString:@"_UITabButton"]) {
+			continue;
+		}
+		// 跟底栏一样大的容器 = 微信的底。frame 也必须是满的 ——
+		// bounds 满尺寸但 frame 为 0×0 的是 portal 源视图（挂在屏幕外给
+		// _UIPortalView 采样用），藏了会毁掉玻璃折射。
+		BOOL fullSize = CGRectGetWidth(sub.bounds) >= bw - 1.0 &&
+						CGRectGetHeight(sub.bounds) >= bh - 1.0 &&
+						CGRectGetWidth(sub.frame) > 1.0 &&
+						CGRectGetHeight(sub.frame) > 1.0;
+		if (!fullSize) continue;
+
+		sub.hidden = YES;
+		sub.backgroundColor = [UIColor clearColor];
+		sub.layer.backgroundColor = [UIColor clearColor].CGColor;
+
+		for (UIView *g in sub.subviews) {
+			if ([g isKindOfClass:[UIVisualEffectView class]]) {
+				((UIVisualEffectView *)g).effect = nil;
+			}
+			g.opaque = NO;
+			if (g.backgroundColor && CGColorGetAlpha(g.backgroundColor.CGColor) > 0.01) {
+				g.backgroundColor = [UIColor clearColor];
+			}
+			if (g.layer.backgroundColor && CGColorGetAlpha(g.layer.backgroundColor) > 0.01) {
+				g.layer.backgroundColor = [UIColor clearColor].CGColor;
+			}
+		}
+	}
+
+	[CATransaction commit];
+
+	// ③ 关掉毛玻璃
+	WCLGKillBlur(bar, 0);
+}
+
+static void WCLGAlignTabBarItems(UITabBar *bar);   // 定义在后面
+
+// 微信会反复把底重画回来，延到下一个 runloop 再擦一遍。
+// 节流：微信一次会话能触发布局几百次，不节流的话主队列会堆满重复的块。
+static void WCLGStripTabBarDeferred(UITabBar *bar) {
+	if (!bar) return;
+	static CFAbsoluteTime last = 0;
+	CFAbsoluteTime now = CACurrentMediaTime();
+	if (now - last < 0.2) return;
+	last = now;
+
+	__weak UITabBar *weakBar = bar;
+	dispatch_async(dispatch_get_main_queue(), ^{
+		WCLGStripTabBar(weakBar);
+		WCLGAlignTabBarItems(weakBar);
+	});
+}
+
+// ============================================================
+//  对齐图标
+//
+//  系统的浮动胶囊是内缩的（如 {21,7},{378,62}），而微信的 MMTabBarItemView
+//  是按全宽均分的（0/105/210/315）。这里拿 platter 的 frame 当基准，
+//  把 item 视图重新摆到胶囊的网格上，并让内容垂直居中到胶囊。
+// ============================================================
+// 自建胶囊：不用系统浮动玻璃，自己垫一个 UIVisualEffectView（只动底部）
+static UIVisualEffectView *WCLGEnsureOurPlatter(UITabBar *bar) {
+	if (!bar) return nil;
+	// 找已有的（用 tag 标记，避免和系统视图混淆）
+	for (UIView *sub in bar.subviews) {
+		if ([sub isKindOfClass:[UIVisualEffectView class]] && sub.tag == 98765) {
+			return (UIVisualEffectView *)sub;
+		}
+	}
+	// 没有就造一个
+	UIVisualEffectView *platter = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterial]];
+	platter.tag = 98765;
+	platter.userInteractionEnabled = NO;
+	platter.layer.cornerRadius = 31.0;
+	platter.layer.masksToBounds = YES;
+	[bar insertSubview:platter atIndex:0];
+	return platter;
+}
+
+static void WCLGAlignTabBarItems(UITabBar *bar) {
+	if (!bar) return;
+
+	// 用自建胶囊（不再依赖系统 Platter）
+	UIVisualEffectView *platter = WCLGEnsureOurPlatter(bar);
+	if (!platter) return;
+
+	// 根据按钮位置摆胶囊：取所有 item 的并集，左右各扩 12，上下各扩 6
+	NSMutableArray<UIView *> *allItems = [NSMutableArray array];
+	for (UIView *sub in bar.subviews) {
+		NSString *cn = NSStringFromClass([sub class]);
+		if ([cn containsString:@"MMTabBarItemView"] || [cn containsString:@"TabBarButton"] || [cn containsString:@"_UITabButton"]) {
+			if (!sub.hidden) [allItems addObject:sub];
+		}
+	}
+	if (allItems.count) {
+		CGRect unionRect = CGRectNull;
+		for (UIView *iv in allItems) unionRect = CGRectUnion(unionRect, iv.frame);
+		if (!CGRectIsNull(unionRect)) {
+			CGRect pill = CGRectInset(unionRect, -12.0, -6.0);
+			// 限制在底栏内
+		pill = CGRectIntersection(pill, bar.bounds);
+		if (!CGRectIsNull(pill) && !CGRectIsEmpty(pill)) {
+			platter.frame = pill;
+			platter.layer.cornerRadius = CGRectGetHeight(pill) / 2.0;
+		}
+		}
+	}
+
+	// 收集微信自己的 item 视图
+	NSMutableArray<UIView *> *items = [NSMutableArray array];
+	for (UIView *sub in bar.subviews) {
+		if ([NSStringFromClass([sub class]) containsString:@"MMTabBarItemView"]) {
+			[items addObject:sub];
+		}
+	}
+	if (items.count == 0) return;
+
+	// 按 x 排序，保证顺序和 tab 一致
+	[items sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+		if (a.frame.origin.x < b.frame.origin.x) return NSOrderedAscending;
+		if (a.frame.origin.x > b.frame.origin.x) return NSOrderedDescending;
+		return NSOrderedSame;
+	}];
+
+	CGRect pf = platter.frame;
+	CGFloat n = (CGFloat)items.count;
+
+	[CATransaction begin];
+	[CATransaction setDisableActions:YES];
+	for (NSInteger i = 0; i < (NSInteger)n; i++) {
+		UIView *iv = items[i];
+		CGPoint c = iv.center;
+
+		// 水平：摆到胶囊的网格上
+		c.x = pf.origin.x + pf.size.width * ((CGFloat)i + 0.5) / n;
+
+		// 垂直：让 item 内容的中心落在胶囊中心
+		CGRect content = CGRectNull;
+		for (UIView *g in iv.subviews) {
+			if (g.hidden) continue;
+			content = CGRectUnion(content, g.frame);
+		}
+		if (!CGRectIsNull(content)) {
+			CGFloat contentMidYInBar = iv.frame.origin.y + CGRectGetMidY(content);
+			c.y += CGRectGetMidY(pf) - contentMidYInBar;
+		}
+
+		// 位置已经对了就别写 —— 无条件写 frame 会让 UIKit 标记重新布局，
+		// 反过来又触发 layoutSubviews，白白多跑一轮
+		if (fabs(iv.center.x - c.x) < 0.5 && fabs(iv.center.y - c.y) < 0.5) continue;
+		iv.center = c;
+	}
+	[CATransaction commit];
+}
+
+
+// ============================================================
+//  从类上强制关掉滚动边缘效果
+//
+//  这是 Swift 类：UIKit.ScrollEdgeEffectView（内部类 _TtCC5UIKit20...BackdropView）。
+//  树遍历会被 UIKit 反复重置，所以 setHidden: 直接强制成 YES，谁设都无效。
+// ============================================================
+static void (*wclg_orig_SEV_setHidden)(id, SEL, BOOL);
+static void wclg_SEV_setHidden(id self, SEL _cmd, BOOL hidden) {
+	wclg_orig_SEV_setHidden(self, _cmd, YES);
+}
+
+static void (*wclg_orig_SEV_layoutSubviews)(id, SEL);
+static void wclg_SEV_layoutSubviews(id self, SEL _cmd) {
+	wclg_orig_SEV_layoutSubviews(self, _cmd);
+	((UIView *)self).hidden = YES;
+}
+
+static void WCLGHookScrollEdgeEffectView(void) {
+	static BOOL done = NO;
+	if (done) return;
+	done = YES;
+
+	Class c = NSClassFromString(@"UIKit.ScrollEdgeEffectView");
+	if (!c) c = objc_getClass("_TtC5UIKit20ScrollEdgeEffectView");
+	if (!c) return;   // 解析不到就只靠树遍历兜底，不影响其他功能
+
+	MSHookMessageEx(c, @selector(setHidden:),
+		(IMP)wclg_SEV_setHidden, (IMP *)&wclg_orig_SEV_setHidden);
+	MSHookMessageEx(c, @selector(layoutSubviews),
+		(IMP)wclg_SEV_layoutSubviews, (IMP *)&wclg_orig_SEV_layoutSubviews);
 }
 
 %ctor {
-    WCLGInstallHooks();
+	WCLGHookScrollEdgeEffectView();
 }
+
+// ============================================================
+//  Hook
+// ============================================================
+%hook MMTabBar
+
+// --- 吞掉微信的 appearance 覆盖，保留系统默认（浮动玻璃的来源）---
+- (void)setStandardAppearance:(UITabBarAppearance *)appearance {
+	if (WCLGEnabled()) return;
+	%orig;
+}
+
+- (void)setScrollEdgeAppearance:(UITabBarAppearance *)appearance {
+	if (WCLGEnabled()) return;
+	%orig;
+}
+
+- (void)setBackgroundImage:(UIImage *)image {
+	if (WCLGEnabled()) return;
+	%orig;
+}
+
+- (void)setShadowImage:(UIImage *)image {
+	if (WCLGEnabled()) return;
+	%orig;
+}
+
+- (void)setBarTintColor:(UIColor *)color {
+	if (WCLGEnabled()) return;
+	%orig;
+}
+
+// 背景色：只挡不透明的
+- (void)setBackgroundColor:(UIColor *)color {
+	if (WCLGEnabled() && color && CGColorGetAlpha(color.CGColor) > 0.01) return;
+	%orig;
+}
+
+// --- 布局后重擦一遍 ---
+- (void)layoutSubviews {
+	%orig;
+	WCLGStripTabBar(self);
+	WCLGAlignTabBarItems(self);
+	WCLGStripTabBarDeferred(self);
+}
+
+- (void)didAddSubview:(UIView *)subview {
+	%orig;
+	WCLGStripTabBar(self);
+	WCLGStripTabBarDeferred(self);
+}
+
+- (void)didMoveToWindow {
+	%orig;
+	WCLGStripTabBar(self);
+}
+
+- (void)didMoveToSuperview {
+	%orig;
+	WCLGStripTabBar(self);
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection *)previous {
+	%orig;
+	WCLGStripTabBar(self);
+}
+
+%end
+
+// MMTabBarController 是 UITabBarController，别干预它的原生行为。
+// 只挂钩微信自己的按钮重排，重排后再擦一次。
+%hook MMTabBarController
+
+- (void)relayoutButtons:(BOOL)animated {
+	%orig;
+	UITabBar *bar = self.tabBar;
+	if ([bar isKindOfClass:[UITabBar class]]) WCLGStripTabBar(bar);
+}
+
+%end
