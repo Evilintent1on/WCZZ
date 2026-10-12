@@ -154,6 +154,12 @@ static id WCZZValue(id obj, NSString *key) {
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else if (ip.section == 1) {
         c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryNone;
+    } else if (ip.section == 2) {
+        c.textLabel.text=@"底栏液态玻璃"; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        c.detailTextLabel.text=WCZZTabBarGlassEnabled()?@"开":@"关";
+        UISwitch *sw=[UISwitch new]; sw.tag=300; sw.on=WCZZTabBarGlassEnabled(); [sw addTarget:self action:@selector(wczzMain:) forControlEvents:UIControlEventValueChanged];
+        sw.translatesAutoresizingMaskIntoConstraints=NO; [c.contentView addSubview:sw];
+        [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     }
     return c;
 }
