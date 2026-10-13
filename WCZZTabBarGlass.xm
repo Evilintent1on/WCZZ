@@ -154,7 +154,7 @@ static void WCLGAlignTabBarItems(UITabBar *bar) {
 		return NSOrderedSame;
 	}];
 
-	CGRect pf = platter.frame;
+	CGRect pf = [platter convertRect:platter.bounds toView:bar];
 	CGFloat n = (CGFloat)items.count;
 
 	[CATransaction begin];
