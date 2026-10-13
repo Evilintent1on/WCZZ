@@ -340,7 +340,7 @@ static void WCLGAlignNavigationPlatters(UINavigationBar *bar) {
 			if (fabs(CGRectGetMidX(visual) - CGRectGetMidX(target)) <= 64.0)
 				target = CGRectUnion(target, visual);
 		}
-		CGRect frame = [platter.superview convertRect:target toView:platter.superview];
+		CGRect frame = [bar convertRect:target toView:platter.superview];
 		frame = CGRectInset(frame, -12.0, -10.0);
 		frame.size.width = MAX(frame.size.width, 48.0);
 		frame.size.height = MAX(frame.size.height, 48.0);
