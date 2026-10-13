@@ -163,17 +163,18 @@ static void WCLGAlignTabBarItems(UITabBar *bar) {
 		UIView *iv = items[i];
 		CGPoint c = iv.center;
 
-		// 水平：摆到胶囊的网格上
+		// 先将 item 框放到胶囊网格，再校正实际可见内容的中心。
 		c.x = pf.origin.x + pf.size.width * ((CGFloat)i + 0.5) / n;
 
-		// 垂直：让 item 内容的中心落在胶囊中心
 		CGRect content = CGRectNull;
 		for (UIView *g in iv.subviews) {
-			if (g.hidden) continue;
+			if (g.hidden || g.alpha < 0.01) continue;
 			content = CGRectUnion(content, g.frame);
 		}
 		if (!CGRectIsNull(content)) {
+			CGFloat contentMidXInBar = iv.frame.origin.x + CGRectGetMidX(content);
 			CGFloat contentMidYInBar = iv.frame.origin.y + CGRectGetMidY(content);
+			c.x += iv.center.x - contentMidXInBar;
 			c.y += CGRectGetMidY(pf) - contentMidYInBar;
 		}
 
@@ -322,6 +323,42 @@ static void WCLGHookScrollEdgeEffectView(void) {
 
 // MMTabBarController 是 UITabBarController，别干预它的原生行为。
 // 只挂钩微信自己的按钮重排，重排后把底栏底色再确认一次。
+// 让导航栏液态按钮里的图片符号在按钮可用区域内居中。
+static void WCLGCenterNavigationButtonImages(UIView *view) {
+	if (!view) return;
+	if ([view isKindOfClass:[UIButton class]]) {
+		UIButton *button = (UIButton *)view;
+		if (button.currentImage) {
+			button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
+			button.contentVerticalAlignment = UIControlContentVerticalAlignmentCenter;
+		}
+	}
+	for (UIView *subview in view.subviews) {
+		WCLGCenterNavigationButtonImages(subview);
+	}
+}
+
+%hook UINavigationBar
+- (void)layoutSubviews {
+	%orig;
+	WCLGCenterNavigationButtonImages(self);
+}
+%end
+
+// 搜索框高度过小时恢复标准触控高度，并将输入框垂直居中。
+%hook UISearchBar
+- (void)layoutSubviews {
+	%orig;
+	UITextField *field = self.searchTextField;
+	if (field && CGRectGetHeight(field.frame) < 32.0) {
+		CGRect fieldFrame = field.frame;
+		fieldFrame.size.height = 32.0;
+		fieldFrame.origin.y = (CGRectGetHeight(self.bounds) - fieldFrame.size.height) * 0.5;
+		field.frame = fieldFrame;
+	}
+}
+%end
+
 %hook MMTabBarController
 
 - (void)relayoutButtons:(BOOL)animated {
