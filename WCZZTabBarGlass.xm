@@ -10,7 +10,7 @@
 // 所以不去替换它，而是把覆盖剥掉，交还给系统渲染：
 //   1. 屏蔽 UIDesignRequiresCompatibility（微信主动申请了旧版设计，这是根本原因）
 //   2. 清掉微信画上去的背景容器
-//   3. 把微信的 item 视图对齐到系统浮动胶囊的网格上
+//   3. 保留系统原生的 Platter 与 tab item 布局，不改按钮位置
 //   4. 关掉系统的滚动边缘模糊（底栏透明后它会露出来）
 
 #import <UIKit/UIKit.h>
@@ -73,7 +73,20 @@ static void WCLGResetBarChrome(UITabBar *bar) {
 	[CATransaction commit];
 }
 
-// 判断 sub 是不是微信的背景容器；是就摘掉并返回 YES
+// 背景容器只允许在不包含交互控件或 tab item 的情况下移除。
+static BOOL WCLGContainsTabBarControl(UIView *view) {
+	if ([view isKindOfClass:[UIControl class]]) return YES;
+	NSString *name = NSStringFromClass([view class]);
+	if ([name containsString:@"MMTabBarItemView"] ||
+		[name containsString:@"TabBarButton"] ||
+		[name containsString:@"_UITabButton"]) return YES;
+	for (UIView *child in view.subviews) {
+		if (WCLGContainsTabBarControl(child)) return YES;
+	}
+	return NO;
+}
+
+// 只摘除确认纯背景的全尺寸微信容器，绝不调整按钮或 item 的 frame/center。
 static BOOL WCLGRemoveChromeContainer(UITabBar *bar, UIView *sub) {
 	if (!bar || !sub) return NO;
 
@@ -83,106 +96,27 @@ static BOOL WCLGRemoveChromeContainer(UITabBar *bar, UIView *sub) {
 		[cn containsString:@"TabBarButton"] ||
 		[cn containsString:@"ItemView"] ||
 		[cn containsString:@"Container"] ||
-		[cn containsString:@"_UITabButton"]) {
-		return NO;
-	}
+		[cn containsString:@"_UITabButton"]) return NO;
 
-	// 跟底栏一样大的容器 = 微信的底。frame 也必须是满的 ——
-	// bounds 满尺寸但 frame 为 0×0 的是 portal 源视图（挂在屏幕外给
-	// _UIPortalView 采样用），摘了会毁掉玻璃折射。
 	CGFloat bw = CGRectGetWidth(bar.bounds), bh = CGRectGetHeight(bar.bounds);
 	BOOL fullSize = CGRectGetWidth(sub.bounds) >= bw - 1.0 &&
 					CGRectGetHeight(sub.bounds) >= bh - 1.0 &&
 					CGRectGetWidth(sub.frame) > 1.0 &&
 					CGRectGetHeight(sub.frame) > 1.0;
-	if (!fullSize) return NO;
+	if (!fullSize || WCLGContainsTabBarControl(sub)) return NO;
 
-	// 从视图树里摘掉，而不是 hidden=YES —— 藏的话微信还能改回可见，
-	// 摘掉就一劳永逸。整个子树一起走，所以不必再逐个清它子视图的底色。
 	[sub removeFromSuperview];
 	return YES;
 }
 
-// 扫一遍底栏的直接子视图，摘掉微信的背景容器。
-//
-// 必须在 layoutSubviews 里调用 —— 容器是「先 addSubview、再由微信自己的
-// layout 设尺寸」的，didAddSubview: 那一刻它的 frame 还是 0，尺寸判定过不了。
-// 摘掉后微信不重加的话，后续扫描就是遍历 ~7 个 subview，开销可忽略。
+// 在布局后清除纯背景容器。系统负责 Platter 与所有 tab item 的位置和尺寸。
 static BOOL WCLGStripChromeContainers(UITabBar *bar) {
 	if (!bar) return NO;
 	BOOL removed = NO;
-	// 遍历中会 removeFromSuperview 改变数组，必须先 copy
 	for (UIView *sub in [bar.subviews copy]) {
 		if (WCLGRemoveChromeContainer(bar, sub)) removed = YES;
 	}
 	return removed;
-}
-
-// ============================================================
-//  对齐图标
-//
-//  系统的浮动胶囊是内缩的（如 {21,7},{378,62}），而微信的 MMTabBarItemView
-//  是按全宽均分的（0/105/210/315）。这里拿 platter 的 frame 当基准，
-//  把 item 视图重新摆到胶囊的网格上，并让内容垂直居中到胶囊。
-// ============================================================
-static void WCLGAlignTabBarItems(UITabBar *bar) {
-	if (!bar) return;
-
-	// 找浮动胶囊
-	UIView *platter = nil;
-	for (UIView *sub in bar.subviews) {
-		if ([NSStringFromClass([sub class]) containsString:@"Platter"]) {
-			platter = sub;
-			break;
-		}
-	}
-	if (!platter) return;
-
-	// 收集微信自己的 item 视图
-	NSMutableArray<UIView *> *items = [NSMutableArray array];
-	for (UIView *sub in bar.subviews) {
-		if ([NSStringFromClass([sub class]) containsString:@"MMTabBarItemView"]) {
-			[items addObject:sub];
-		}
-	}
-	if (items.count == 0) return;
-
-	// 按 x 排序，保证顺序和 tab 一致
-	[items sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
-		if (a.frame.origin.x < b.frame.origin.x) return NSOrderedAscending;
-		if (a.frame.origin.x > b.frame.origin.x) return NSOrderedDescending;
-		return NSOrderedSame;
-	}];
-
-	CGRect pf = [platter convertRect:platter.bounds toView:bar];
-	CGFloat n = (CGFloat)items.count;
-
-	[CATransaction begin];
-	[CATransaction setDisableActions:YES];
-	for (NSInteger i = 0; i < (NSInteger)n; i++) {
-		UIView *iv = items[i];
-		CGPoint c = iv.center;
-
-		// 水平：摆到胶囊的网格上
-		c.x = pf.origin.x + pf.size.width * ((CGFloat)i + 0.5) / n;
-
-		// 垂直：让 item 内容的中心落在胶囊中心
-		CGRect content = CGRectNull;
-		for (UIView *g in iv.subviews) {
-			if (g.hidden) continue;
-			content = CGRectUnion(content, g.frame);
-		}
-		if (!CGRectIsNull(content)) {
-			CGFloat contentMidYInBar = iv.frame.origin.y + CGRectGetMidY(content);
-			c.y += CGRectGetMidY(pf) - contentMidYInBar;
-		}
-
-		// 位置已经对了就别写 —— 无条件写 frame 会让 UIKit 标记重新布局，
-		// 反过来又触发 layoutSubviews，白白多跑一轮
-		if (fabs(iv.center.x - c.x) < 0.5 && fabs(iv.center.y - c.y) < 0.5) continue;
-		iv.center = c;
-	}
-	[CATransaction commit];
 }
 
 // ============================================================
@@ -294,13 +228,12 @@ static void WCLGHookScrollEdgeEffectView(void) {
 	%orig;
 }
 
-// --- 布局后：摘背景容器 + 对齐图标 ---
+// --- 布局后：只摘除纯背景容器，位置交由 UIKit 管理 ---
 - (void)layoutSubviews {
 	%orig;
 	if (WCLGStripChromeContainers(self)) {
 		WCLGResetBarChrome(self);
 	}
-	WCLGAlignTabBarItems(self);
 }
 
 - (void)didMoveToWindow {
