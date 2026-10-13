@@ -125,8 +125,10 @@ static BOOL WCLGStripChromeContainers(UITabBar *bar) {
 //  是按全宽均分的（0/105/210/315）。这里拿 platter 的 frame 当基准，
 //  把 item 视图重新摆到胶囊的网格上，并让内容垂直居中到胶囊。
 // ============================================================
-static void WCLGAlignTabBarPlatter(UITabBar *bar) {
+static void WCLGAlignTabBarItems(UITabBar *bar) {
 	if (!bar) return;
+
+	// 找浮动胶囊
 	UIView *platter = nil;
 	for (UIView *sub in bar.subviews) {
 		if ([NSStringFromClass([sub class]) containsString:@"Platter"]) {
@@ -136,22 +138,53 @@ static void WCLGAlignTabBarPlatter(UITabBar *bar) {
 	}
 	if (!platter) return;
 
-	CGRect content = CGRectNull;
-	for (UIView *item in bar.subviews) {
-		if (![NSStringFromClass([item class]) containsString:@"MMTabBarItemView"]) continue;
-		for (UIView *sub in item.subviews) {
-			if (sub.hidden || sub.alpha < 0.01) continue;
-			CGRect rect = [sub convertRect:sub.bounds toView:bar];
-			content = CGRectUnion(content, rect);
+	// 收集微信自己的 item 视图
+	NSMutableArray<UIView *> *items = [NSMutableArray array];
+	for (UIView *sub in bar.subviews) {
+		if ([NSStringFromClass([sub class]) containsString:@"MMTabBarItemView"]) {
+			[items addObject:sub];
 		}
 	}
-	if (CGRectIsNull(content)) return;
+	if (items.count == 0) return;
 
-	// 保持系统玻璃的宽高，只将玻璃整体移到实际内容的垂直中心。
-	CGPoint center = platter.center;
-	center.y = CGRectGetMidY(content);
-	if (fabs(platter.center.y - center.y) >= 0.5) platter.center = center;
+	// 按 x 排序，保证顺序和 tab 一致
+	[items sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+		if (a.frame.origin.x < b.frame.origin.x) return NSOrderedAscending;
+		if (a.frame.origin.x > b.frame.origin.x) return NSOrderedDescending;
+		return NSOrderedSame;
+	}];
+
+	CGRect pf = [platter convertRect:platter.bounds toView:bar];
+	CGFloat n = (CGFloat)items.count;
+
+	[CATransaction begin];
+	[CATransaction setDisableActions:YES];
+	for (NSInteger i = 0; i < (NSInteger)n; i++) {
+		UIView *iv = items[i];
+		CGPoint c = iv.center;
+
+		// 水平：摆到胶囊的网格上
+		c.x = pf.origin.x + pf.size.width * ((CGFloat)i + 0.5) / n;
+
+		// 垂直：让 item 内容的中心落在胶囊中心
+		CGRect content = CGRectNull;
+		for (UIView *g in iv.subviews) {
+			if (g.hidden) continue;
+			content = CGRectUnion(content, g.frame);
+		}
+		if (!CGRectIsNull(content)) {
+			CGFloat contentMidYInBar = iv.frame.origin.y + CGRectGetMidY(content);
+			c.y += CGRectGetMidY(pf) - contentMidYInBar;
+		}
+
+		// 位置已经对了就别写 —— 无条件写 frame 会让 UIKit 标记重新布局，
+		// 反过来又触发 layoutSubviews，白白多跑一轮
+		if (fabs(iv.center.x - c.x) < 0.5 && fabs(iv.center.y - c.y) < 0.5) continue;
+		iv.center = c;
+	}
+	[CATransaction commit];
 }
+
 // ============================================================
 //  关键：让 UIKit 认为微信没申请旧版设计
 //
@@ -267,7 +300,7 @@ static void WCLGHookScrollEdgeEffectView(void) {
 	if (WCLGStripChromeContainers(self)) {
 		WCLGResetBarChrome(self);
 	}
-	WCLGAlignTabBarPlatter(self);
+	WCLGAlignTabBarItems(self);
 }
 
 - (void)didMoveToWindow {
@@ -289,87 +322,6 @@ static void WCLGHookScrollEdgeEffectView(void) {
 
 // MMTabBarController 是 UITabBarController，别干预它的原生行为。
 // 只挂钩微信自己的按钮重排，重排后把底栏底色再确认一次。
-// 直接调整导航栏 Liquid Glass 容器，使玻璃围绕原有按钮内容；不移动按钮。
-static void WCLGCollectButtons(UIView *view, NSMutableArray<UIButton *> *buttons) {
-	if ([view isKindOfClass:[UIButton class]]) [buttons addObject:(UIButton *)view];
-	for (UIView *subview in view.subviews) WCLGCollectButtons(subview, buttons);
-}
-
-static void WCLGCollectPlatters(UIView *view, NSMutableArray<UIView *> *platters) {
-	if ([NSStringFromClass([view class]) containsString:@"Platter"]) [platters addObject:view];
-	for (UIView *subview in view.subviews) WCLGCollectPlatters(subview, platters);
-}
-
-static CGRect WCLGButtonVisualRect(UIButton *button, UIView *coordinateView) {
-	CGRect result = CGRectNull;
-	for (UIView *subview in button.subviews) {
-		if ([subview isKindOfClass:[UIImageView class]] && !subview.hidden && subview.alpha > 0.01) {
-			UIImageView *imageView = (UIImageView *)subview;
-			if (imageView.image) {
-				result = CGRectUnion(result, [imageView convertRect:imageView.bounds toView:coordinateView]);
-			}
-		}
-	}
-	if (CGRectIsNull(result)) result = [button convertRect:button.bounds toView:coordinateView];
-	return result;
-}
-
-static void WCLGAlignNavigationPlatters(UINavigationBar *bar) {
-	NSMutableArray<UIButton *> *buttons = [NSMutableArray array];
-	NSMutableArray<UIView *> *platters = [NSMutableArray array];
-	WCLGCollectButtons(bar, buttons);
-	WCLGCollectPlatters(bar, platters);
-	for (UIView *platter in platters) {
-		if (!platter.superview || CGRectGetWidth(platter.bounds) < 1.0) continue;
-		CGPoint oldCenter = [platter.superview convertPoint:platter.center toView:bar];
-		UIButton *nearest = nil;
-		CGFloat nearestDistance = CGFLOAT_MAX;
-		for (UIButton *button in buttons) {
-			if (button.hidden || button.alpha < 0.01) continue;
-			CGRect visual = WCLGButtonVisualRect(button, bar);
-			CGFloat distance = fabs(CGRectGetMidX(visual) - oldCenter.x);
-			if (distance < nearestDistance) { nearestDistance = distance; nearest = button; }
-		}
-		if (!nearest || nearestDistance > 120.0) continue;
-
-		CGRect target = WCLGButtonVisualRect(nearest, bar);
-		// Include nearby buttons only when they already belong to this same glass group.
-		for (UIButton *button in buttons) {
-			if (button == nearest || button.hidden || button.alpha < 0.01) continue;
-			CGRect visual = WCLGButtonVisualRect(button, bar);
-			if (fabs(CGRectGetMidX(visual) - CGRectGetMidX(target)) <= 64.0)
-				target = CGRectUnion(target, visual);
-		}
-		CGRect frame = [bar convertRect:target toView:platter.superview];
-		frame = CGRectInset(frame, -12.0, -10.0);
-		frame.size.width = MAX(frame.size.width, 48.0);
-		frame.size.height = MAX(frame.size.height, 48.0);
-		if (fabs(CGRectGetMidX(frame) - CGRectGetMidX(platter.frame)) < 0.5 &&
-			fabs(CGRectGetMidY(frame) - CGRectGetMidY(platter.frame)) < 0.5 &&
-			fabs(CGRectGetWidth(frame) - CGRectGetWidth(platter.frame)) < 0.5) continue;
-		platter.frame = frame;
-	}
-}
-
-%hook UINavigationBar
-- (void)layoutSubviews {
-	%orig;
-	WCLGAlignNavigationPlatters(self);
-}
-%end
-
-// 搜索框容器过矮时恢复高度，让系统重新布局玻璃背景与输入区。
-%hook UISearchBar
-- (void)layoutSubviews {
-	%orig;
-	CGRect frame = self.frame;
-	if (CGRectGetHeight(frame) < 36.0) {
-		frame.size.height = 36.0;
-		self.frame = frame;
-	}
-}
-%end
-
 %hook MMTabBarController
 
 - (void)relayoutButtons:(BOOL)animated {
