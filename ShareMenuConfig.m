@@ -277,20 +277,6 @@ static UIView *WCZZShareContainerForView(UIView *label, UIView *sheetRoot) {
     return nil;
 }
 
-// 这一格是否在「横向可滚动」的容器里（= 好友那一排）
-static BOOL WCZZShareInHorizontalScroller(UIView *v, UIView *sheet) {
-    UIView *p = v.superview;
-    NSInteger guard = 0;
-    while (p && p != sheet && guard++ < 8) {
-        if ([p isKindOfClass:[UIScrollView class]]) {
-            UIScrollView *sv = (UIScrollView *)p;
-            if (sv.contentSize.width > CGRectGetWidth(sv.bounds) + 8.0) return YES;
-        }
-        p = p.superview;
-    }
-    return NO;
-}
-
 // 找到「一行」容器：≥3 个子视图、高度一致、y 接近；返回该行，cellOut=这一行里的那个格子
 static UIView *WCZZShareRowContainerFor(UIView *inner, UIView *sheet, UIView **cellOut) {
     if (cellOut) *cellOut = nil;
@@ -318,6 +304,27 @@ static UIView *WCZZShareRowContainerFor(UIView *inner, UIView *sheet, UIView **c
         }
         cell = p;
         p = p.superview;
+    }
+    return nil;
+}
+
+// 求一组视图的最低公共祖先（限定在 limit 之内）
+static UIView *WCZZShareCommonAncestor(NSArray<UIView *> *views, UIView *limit) {
+    if (views.count == 0) return nil;
+    UIView *candidate = views[0].superview;
+    while (candidate && candidate != limit) {
+        BOOL all = YES;
+        for (UIView *v in views) {
+            UIView *p = v;
+            BOOL inside = NO;
+            while (p) {
+                if (p == candidate) { inside = YES; break; }
+                p = p.superview;
+            }
+            if (!inside) { all = NO; break; }
+        }
+        if (all) return candidate;
+        candidate = candidate.superview;
     }
     return nil;
 }
@@ -482,7 +489,6 @@ static NSDictionary<NSString *, UIView *> *WCZZShareCollectItems(UIView *sheet,
         if (trimmed.length > 24) continue;
         UIView *container = WCZZShareContainerForView(lb, sheet);
         if (!container) continue;
-        if (WCZZShareInHorizontalScroller(container, sheet)) continue;   // 好友排（横向滚动）
         if (!inner[trimmed]) inner[trimmed] = container;
     }
 
@@ -494,22 +500,41 @@ static NSDictionary<NSString *, UIView *> *WCZZShareCollectItems(UIView *sheet,
             [ys addObject:@(CGRectGetMinY(r))];
         }
         [ys sortUsingSelector:@selector(compare:)];
-        CGFloat firstY = ys.firstObject.doubleValue;
         NSInteger bandCount = 0;
         CGFloat lastBandY = -10000.0;
         for (NSNumber *n in ys) {
             if (fabs(n.doubleValue - lastBandY) > 8.0) { bandCount++; lastBandY = n.doubleValue; }
         }
         if (bandCount >= 2) {
-            NSMutableArray<NSString *> *drop = [NSMutableArray array];
-            for (NSString *title in inner) {
-                UIView *v = inner[title];
-                CGRect r = [v convertRect:v.bounds toView:sheet];
-                if (fabs(CGRectGetMinY(r) - firstY) <= 8.0) [drop addObject:title];
+            // 把 y 分带（8pt 容差），找「最大间隙」→ 间隙以上的都算好友排
+            NSArray<NSNumber *> *sortedYs = [ys sortedArrayUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b) {
+                return [a compare:b];
+            }];
+            NSMutableArray<NSNumber *> *bandTops = [NSMutableArray array];
+            for (NSNumber *n in sortedYs) {
+                if (bandTops.count == 0 ||
+                    fabs(n.doubleValue - bandTops.lastObject.doubleValue) > 8.0) {
+                    [bandTops addObject:n];
+                }
             }
-            // 保护：只有「丢掉的是少数」才执行，避免配置误判把整排都丢掉
-            if (drop.count > 0 && drop.count <= (NSInteger)inner.count * 7 / 10) {
-                for (NSString *t in drop) [inner removeObjectForKey:t];
+            CGFloat maxGap = 0.0;
+            NSInteger splitIndex = 0;      // 间隙之后的第一带
+            for (NSInteger i = 1; i < (NSInteger)bandTops.count; i++) {
+                CGFloat gap = bandTops[(NSUInteger)i].doubleValue - bandTops[(NSUInteger)(i - 1)].doubleValue;
+                if (gap > maxGap) { maxGap = gap; splitIndex = i; }
+            }
+            if (splitIndex > 0) {
+                CGFloat cutoff = bandTops[(NSUInteger)splitIndex].doubleValue - 4.0;
+                NSMutableArray<NSString *> *drop = [NSMutableArray array];
+                for (NSString *title in inner) {
+                    UIView *v = inner[title];
+                    CGRect r = [v convertRect:v.bounds toView:sheet];
+                    if (CGRectGetMinY(r) < cutoff) [drop addObject:title];
+                }
+                // 保护：丢掉的不能是大头
+                if (drop.count > 0 && drop.count <= (NSInteger)inner.count * 7 / 10) {
+                    for (NSString *t in drop) [inner removeObjectForKey:t];
+                }
             }
         }
     }
@@ -624,20 +649,25 @@ NSInteger WCZZShareMenuApplyToSheet(UIView *sheet) {
         if (row) [rowsToReflow addObject:row];
     }
     if (hidden > 0 && WCZZShareReflowEnabled()) {
-        // 优先按「网格」紧凑重排（分享面板的项就在一个横向分页的 MMScrollView 里）
-        NSMutableSet<UIView *> *grids = [NSMutableSet set];
-        for (UIView *row in rowsToReflow) {
-            if (row.superview) [grids addObject:row.superview];
-            [grids addObject:row];
+        // ① 取所有格子的公共祖先（= 真正的网格容器），对它做紧凑
+        NSMutableArray<UIView *> *allCells = [NSMutableArray array];
+        for (NSString *title in items) {
+            UIView *c = cells[title] ?: items[title];
+            if (c) [allCells addObject:c];
         }
+        UIView *grid = WCZZShareCommonAncestor(allCells, sheet);
         BOOL compacted = NO;
-        for (UIView *grid in grids) {
-            if (WCZZShareCompactGrid(grid) > 0) { compacted = YES; break; }
-        }
+        if (grid) compacted = (WCZZShareCompactGrid(grid) > 0);
+        if (!compacted && grid.superview) compacted = (WCZZShareCompactGrid(grid.superview) > 0);
+
+        // ② 退化方案：逐行居中
         if (!compacted) {
             for (UIView *row in rowsToReflow) WCZZShareReflowRowCentered(row);
         }
     }
+
+    // 注意：这里**不能**再排延迟调用自己（会指数递归）。
+    // 反复重压由定时扫描（2s）和 sendEvent 钩子负责。
     return hidden;
 }
 
