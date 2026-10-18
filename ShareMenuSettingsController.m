@@ -109,6 +109,9 @@ static void SMApplyCard(UITableViewCell *cell, UITableView *tv, NSIndexPath *ip)
         self.tableView.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
         self.view.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
     }
+    self.navigationItem.leftBarButtonItem =
+        [[UIBarButtonItem alloc] initWithTitle:@"清空" style:UIBarButtonItemStylePlain
+                                        target:self action:@selector(onResetAll)];
     self.navigationItem.rightBarButtonItems = @[
         [[UIBarButtonItem alloc] initWithTitle:@"重新抓取" style:UIBarButtonItemStylePlain
                                         target:self action:@selector(onRescan)],
@@ -129,6 +132,16 @@ static void SMApplyCard(UITableViewCell *cell, UITableView *tv, NSIndexPath *ip)
 }
 
 #pragma mark - 动作
+
+- (void)onResetAll {
+    WCZZShareMenuResetAll();
+    [self reloadEntries];
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"已清空"
+                                                              message:@"列表已清空；下次打开分享面板会重新抓取。"
+                                                       preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
+}
 
 - (void)onRescan {
     NSInteger added = WCZZShareMenuCaptureOpenSheet();

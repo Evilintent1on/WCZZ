@@ -213,6 +213,22 @@ static CGFloat WCZZShareScreenH(void) {
     return h > 100.0 ? h : 844.0;
 }
 
+// 分享面板特有的标题（附件面板/表情面板没有这些）—— 用于排除误判
+static BOOL WCZZShareHasShareOnlyTitle(NSMutableSet<NSString *> *texts) {
+    static NSArray<NSString *> *titles = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        titles = @[@"转发给朋友", @"保存图片", @"保存视频", @"用其他应用打开",
+                   @"用小程序打开", @"此聊天中的图片视频", @"定位到聊天位置", @"浮窗"];
+    });
+    for (NSString *t in texts) {
+        for (NSString *probe in titles) {
+            if ([t rangeOfString:probe].location != NSNotFound) return YES;
+        }
+    }
+    return NO;
+}
+
 BOOL WCZZShareMenuLooksLikeSheet(UIView *view) {
     if (!view || view.hidden || view.alpha < 0.05) return NO;
     if (!view.window) return NO;
@@ -226,6 +242,10 @@ BOOL WCZZShareMenuLooksLikeSheet(UIView *view) {
             if ([t rangeOfString:@"取消"].location != NSNotFound) hasCancel = YES;
         }
         if (hasForward && hasCancel) return YES;
+        // ★ 结构判定必须带分享面板特有标题，否则会把「+」附件面板、表情面板也认成分享面板
+        if (!WCZZShareHasShareOnlyTitle(texts)) return NO;
+    } else {
+        return NO;
     }
 
     CGFloat screenH = WCZZShareScreenH();
@@ -300,6 +320,91 @@ static UIView *WCZZShareRowContainerFor(UIView *inner, UIView *sheet, UIView **c
         p = p.superview;
     }
     return nil;
+}
+
+// 网格紧凑重排：把可见的 item 按钮按「阅读顺序」重新填回网格槽位（消除隐藏后的空洞）
+//  从现有布局推断：列数、每页行数、水平/垂直间距、起点；页宽 = 容器宽
+static NSInteger WCZZShareCompactGrid(UIView *grid) {
+    if (!grid) return 0;
+
+    NSMutableArray<UIView *> *cells = [NSMutableArray array];
+    for (UIView *s in grid.subviews) {
+        if (s.hidden || CGRectIsEmpty(s.frame)) continue;
+        if (!WCZZShareIsItemCell(s) && !(s.subviews.count >= 2 &&
+            CGRectGetWidth(s.frame) >= 24.0 && CGRectGetWidth(s.frame) <= 220.0)) continue;
+        [cells addObject:s];
+    }
+    if (cells.count < 3) return 0;
+
+    // 阅读顺序：先按 y 从上到下，再按 x 从左到右（同一行内）
+    [cells sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+        CGFloat ay = round(CGRectGetMinY(a.frame) / 8.0), by = round(CGRectGetMinY(b.frame) / 8.0);
+        if (ay < by) return NSOrderedAscending;
+        if (ay > by) return NSOrderedDescending;
+        if (CGRectGetMinX(a.frame) < CGRectGetMinX(b.frame)) return NSOrderedAscending;
+        if (CGRectGetMinX(a.frame) > CGRectGetMinX(b.frame)) return NSOrderedDescending;
+        return NSOrderedSame;
+    }];
+
+    CGFloat cellW = CGRectGetWidth(cells[0].frame), cellH = CGRectGetHeight(cells[0].frame);
+    CGFloat y0 = CGRectGetMinY(cells[0].frame), x0 = CGFloatMax;
+
+    // 第一行（y == y0）的按钮 = 每行几个，以及 x 起点/水平间距
+    NSMutableArray<UIView *> *firstRow = [NSMutableArray array];
+    for (UIView *v in cells) {
+        if (fabs(CGRectGetMinY(v.frame) - y0) <= 2.0) [firstRow addObject:v];
+    }
+    if (firstRow.count < 2) return 0;
+    [firstRow sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+        if (CGRectGetMinX(a.frame) < CGRectGetMinX(b.frame)) return NSOrderedAscending;
+        if (CGRectGetMinX(a.frame) > CGRectGetMinX(b.frame)) return NSOrderedDescending;
+        return NSOrderedSame;
+    }];
+    NSInteger columns = (NSInteger)firstRow.count;
+    x0 = CGRectGetMinX(firstRow[0].frame);
+    CGFloat dx = CGRectGetMinX(firstRow[1].frame) - x0;
+    if (dx < cellW) dx = cellW + 8.0;
+
+    // 每页行数：不同 y 的个数（最多 4 行）
+    NSMutableArray<NSNumber *> *ys = [NSMutableArray array];
+    for (UIView *v in cells) {
+        CGFloat y = round(CGRectGetMinY(v.frame) / 8.0) * 8.0;
+        BOOL seen = NO;
+        for (NSNumber *n in ys) if (fabs(n.doubleValue - y) < 4.0) { seen = YES; break; }
+        if (!seen) [ys addObject:@(y)];
+    }
+    if (ys.count == 0) return 0;
+    NSInteger rowsPerPage = (NSInteger)MIN((NSInteger)ys.count, 4);
+
+    CGFloat dy = cellH + 8.0;
+    if (rowsPerPage >= 2) {
+        NSArray<NSNumber *> *sortedYs = [ys sortedArrayUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b) {
+            return [a compare:b];
+        }];
+        CGFloat second = sortedYs[1].doubleValue;
+        if (second > y0) dy = second - y0;
+    }
+
+    CGFloat pageWidth = CGRectGetWidth(grid.bounds);
+    if (pageWidth < 100.0) pageWidth = 402.0;
+    NSInteger perPage = columns * rowsPerPage;
+    if (perPage < 1) return 0;
+
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (NSInteger i = 0; i < (NSInteger)cells.count; i++) {
+        UIView *v = cells[(NSUInteger)i];
+        NSInteger page = i / perPage;
+        NSInteger slot = i % perPage;
+        NSInteger row = slot / columns;
+        NSInteger col = slot % columns;
+        CGRect f = v.frame;
+        f.origin.x = page * pageWidth + x0 + col * dx;
+        f.origin.y = y0 + row * dy;
+        if (!CGRectEqualToRect(v.frame, f)) v.frame = f;
+    }
+    [CATransaction commit];
+    return (NSInteger)cells.count;
 }
 
 // 行内居中重排（缝隙消失）
@@ -519,7 +624,19 @@ NSInteger WCZZShareMenuApplyToSheet(UIView *sheet) {
         if (row) [rowsToReflow addObject:row];
     }
     if (hidden > 0 && WCZZShareReflowEnabled()) {
-        for (UIView *row in rowsToReflow) WCZZShareReflowRowCentered(row);
+        // 优先按「网格」紧凑重排（分享面板的项就在一个横向分页的 MMScrollView 里）
+        NSMutableSet<UIView *> *grids = [NSMutableSet set];
+        for (UIView *row in rowsToReflow) {
+            if (row.superview) [grids addObject:row.superview];
+            [grids addObject:row];
+        }
+        BOOL compacted = NO;
+        for (UIView *grid in grids) {
+            if (WCZZShareCompactGrid(grid) > 0) { compacted = YES; break; }
+        }
+        if (!compacted) {
+            for (UIView *row in rowsToReflow) WCZZShareReflowRowCentered(row);
+        }
     }
     return hidden;
 }
