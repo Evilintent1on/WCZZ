@@ -347,7 +347,7 @@ static NSInteger WCZZShareCompactGrid(UIView *grid) {
     }];
 
     CGFloat cellW = CGRectGetWidth(cells[0].frame), cellH = CGRectGetHeight(cells[0].frame);
-    CGFloat y0 = CGRectGetMinY(cells[0].frame), x0 = CGFloatMax;
+    CGFloat y0 = CGRectGetMinY(cells[0].frame), x0 = CGFLOAT_MAX;
 
     // 第一行（y == y0）的按钮 = 每行几个，以及 x 起点/水平间距
     NSMutableArray<UIView *> *firstRow = [NSMutableArray array];
