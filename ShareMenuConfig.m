@@ -229,6 +229,41 @@ static BOOL WCZZShareHasShareOnlyTitle(NSMutableSet<NSString *> *texts) {
     return NO;
 }
 
+// 在 root 里找「最内层 / 最小」的匹配面板
+// （面板外面还包着 UIDropShadowView 之类的全屏容器，取最外层会把底栏也算进去）
+static UIView *WCZZShareFindBestSheetIn(UIView *root) {
+    if (!root) return nil;
+    CGFloat screenH = WCZZShareScreenH();
+    CGRect rootRect = [root convertRect:root.bounds toView:root.window ?: root];
+
+    UIView *best = nil;
+    CGFloat bestArea = CGFLOAT_MAX;
+    NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:root];
+    NSInteger guard = 0;
+    while (stack.count && guard < 5000) {
+        UIView *v = stack.lastObject;
+        [stack removeLastObject];
+        guard++;
+
+        if (v != root && WCZZShareMenuLooksLikeSheet(v)) {
+            CGRect r = [v convertRect:v.bounds toView:root];
+            CGFloat h = CGRectGetHeight(r), w = CGRectGetWidth(r);
+            // 面板应该是「满屏宽 + 一定高度（不是全屏）」
+            if (w >= CGRectGetWidth(rootRect) * 0.9 && h >= 200.0 && h <= screenH * 0.85) {
+                CGFloat area = w * h;
+                if (area < bestArea) { bestArea = area; best = v; }
+                continue;        // 命中就不要再往里找这一支（避免找到更小的内部容器）
+            }
+        }
+        // 逆序压栈：后添加的子视图（面板通常最后加）优先被处理
+        NSArray<UIView *> *subs = v.subviews;
+        for (NSInteger i = (NSInteger)subs.count - 1; i >= 0; i--) {
+            [stack addObject:subs[i]];
+        }
+    }
+    return best;
+}
+
 BOOL WCZZShareMenuLooksLikeSheet(UIView *view) {
     if (!view || view.hidden || view.alpha < 0.05) return NO;
     if (!view.window) return NO;
@@ -329,89 +364,75 @@ static UIView *WCZZShareCommonAncestor(NSArray<UIView *> *views, UIView *limit) 
     return nil;
 }
 
-// 网格紧凑重排：把可见的 item 按钮按「阅读顺序」重新填回网格槽位（消除隐藏后的空洞）
-//  从现有布局推断：列数、每页行数、水平/垂直间距、起点；页宽 = 容器宽
-static NSInteger WCZZShareCompactGrid(UIView *grid) {
-    if (!grid) return 0;
+// 逐行收缩：保留「行」结构，只把被隐藏项留下的空隙挤掉，并让每行居中
+//   —— 分享面板是「两行」而不是均匀网格，按统一网格重排会把两行揉成一行
+static NSInteger WCZZShareCompactRows(UIView *container) {
+    if (!container) return 0;
 
+    // 收集可见的 item 格子
     NSMutableArray<UIView *> *cells = [NSMutableArray array];
-    for (UIView *s in grid.subviews) {
+    for (UIView *s in container.subviews) {
         if (s.hidden || CGRectIsEmpty(s.frame)) continue;
-        if (!WCZZShareIsItemCell(s) && !(s.subviews.count >= 2 &&
-            CGRectGetWidth(s.frame) >= 24.0 && CGRectGetWidth(s.frame) <= 220.0)) continue;
+        if (!WCZZShareIsItemCell(s) &&
+            !(s.subviews.count >= 2 && CGRectGetWidth(s.frame) >= 24.0 &&
+              CGRectGetWidth(s.frame) <= 220.0 && CGRectGetHeight(s.frame) >= 24.0))
+            continue;
         [cells addObject:s];
     }
-    if (cells.count < 3) return 0;
+    if (cells.count < 2) return 0;
 
-    // 阅读顺序：先按 y 从上到下，再按 x 从左到右（同一行内）
-    [cells sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
-        CGFloat ay = round(CGRectGetMinY(a.frame) / 8.0), by = round(CGRectGetMinY(b.frame) / 8.0);
-        if (ay < by) return NSOrderedAscending;
-        if (ay > by) return NSOrderedDescending;
-        if (CGRectGetMinX(a.frame) < CGRectGetMinX(b.frame)) return NSOrderedAscending;
-        if (CGRectGetMinX(a.frame) > CGRectGetMinX(b.frame)) return NSOrderedDescending;
+    // 按 y 分行（8pt 容差）
+    NSMutableArray<NSMutableArray<UIView *> *> *rows = [NSMutableArray array];
+    NSArray<UIView *> *byY = [cells sortedArrayUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+        if (CGRectGetMinY(a.frame) < CGRectGetMinY(b.frame)) return NSOrderedAscending;
+        if (CGRectGetMinY(a.frame) > CGRectGetMinY(b.frame)) return NSOrderedDescending;
         return NSOrderedSame;
     }];
-
-    CGFloat cellW = CGRectGetWidth(cells[0].frame), cellH = CGRectGetHeight(cells[0].frame);
-    CGFloat y0 = CGRectGetMinY(cells[0].frame), x0 = CGFLOAT_MAX;
-
-    // 第一行（y == y0）的按钮 = 每行几个，以及 x 起点/水平间距
-    NSMutableArray<UIView *> *firstRow = [NSMutableArray array];
-    for (UIView *v in cells) {
-        if (fabs(CGRectGetMinY(v.frame) - y0) <= 2.0) [firstRow addObject:v];
-    }
-    if (firstRow.count < 2) return 0;
-    [firstRow sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
-        if (CGRectGetMinX(a.frame) < CGRectGetMinX(b.frame)) return NSOrderedAscending;
-        if (CGRectGetMinX(a.frame) > CGRectGetMinX(b.frame)) return NSOrderedDescending;
-        return NSOrderedSame;
-    }];
-    NSInteger columns = (NSInteger)firstRow.count;
-    x0 = CGRectGetMinX(firstRow[0].frame);
-    CGFloat dx = CGRectGetMinX(firstRow[1].frame) - x0;
-    if (dx < cellW) dx = cellW + 8.0;
-
-    // 每页行数：不同 y 的个数（最多 4 行）
-    NSMutableArray<NSNumber *> *ys = [NSMutableArray array];
-    for (UIView *v in cells) {
-        CGFloat y = round(CGRectGetMinY(v.frame) / 8.0) * 8.0;
-        BOOL seen = NO;
-        for (NSNumber *n in ys) if (fabs(n.doubleValue - y) < 4.0) { seen = YES; break; }
-        if (!seen) [ys addObject:@(y)];
-    }
-    if (ys.count == 0) return 0;
-    NSInteger rowsPerPage = (NSInteger)MIN((NSInteger)ys.count, 4);
-
-    CGFloat dy = cellH + 8.0;
-    if (rowsPerPage >= 2) {
-        NSArray<NSNumber *> *sortedYs = [ys sortedArrayUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b) {
-            return [a compare:b];
-        }];
-        CGFloat second = sortedYs[1].doubleValue;
-        if (second > y0) dy = second - y0;
+    for (UIView *v in byY) {
+        NSMutableArray<UIView *> *row = rows.lastObject;
+        if (row && fabs(CGRectGetMinY(row[0].frame) - CGRectGetMinY(v.frame)) <= 8.0) {
+            [row addObject:v];
+        } else {
+            [rows addObject:[NSMutableArray arrayWithObject:v]];
+        }
     }
 
-    CGFloat pageWidth = CGRectGetWidth(grid.bounds);
-    if (pageWidth < 100.0) pageWidth = 402.0;
-    NSInteger perPage = columns * rowsPerPage;
-    if (perPage < 1) return 0;
+    CGFloat containerW = CGRectGetWidth(container.bounds);
+    if (containerW < 100.0) return 0;
 
+    NSInteger moved = 0;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    for (NSInteger i = 0; i < (NSInteger)cells.count; i++) {
-        UIView *v = cells[(NSUInteger)i];
-        NSInteger page = i / perPage;
-        NSInteger slot = i % perPage;
-        NSInteger row = slot / columns;
-        NSInteger col = slot % columns;
-        CGRect f = v.frame;
-        f.origin.x = page * pageWidth + x0 + col * dx;
-        f.origin.y = y0 + row * dy;
-        if (!CGRectEqualToRect(v.frame, f)) v.frame = f;
+    for (NSMutableArray<UIView *> *row in rows) {
+        // 行内按 x 排序
+        [row sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+            if (CGRectGetMinX(a.frame) < CGRectGetMinX(b.frame)) return NSOrderedAscending;
+            if (CGRectGetMinX(a.frame) > CGRectGetMinX(b.frame)) return NSOrderedDescending;
+            return NSOrderedSame;
+        }];
+        CGFloat w = CGRectGetWidth(row[0].frame);
+        CGFloat gap = 8.0;
+        if (row.count >= 2) {
+            CGFloat g = CGRectGetMinX(row[1].frame) - CGRectGetMaxX(row[0].frame);
+            if (g >= 0.0 && g <= 60.0) gap = g;
+        }
+        CGFloat total = w * (CGFloat)row.count + gap * (CGFloat)(row.count - 1);
+        CGFloat x = (containerW - total) / 2.0;
+        if (x < 0.0) x = 0.0;
+        CGFloat y = CGRectGetMinY(row[0].frame);
+        for (UIView *v in row) {
+            CGRect f = v.frame;
+            if (fabs(f.origin.x - x) > 0.5 || fabs(f.origin.y - y) > 0.5) {
+                f.origin.x = x;
+                f.origin.y = y;
+                v.frame = f;
+                moved++;
+            }
+            x = CGRectGetMaxX(f) + gap;
+        }
     }
     [CATransaction commit];
-    return (NSInteger)cells.count;
+    return moved;
 }
 
 // 行内居中重排（缝隙消失）
@@ -469,12 +490,15 @@ static NSDictionary<NSString *, UIView *> *WCZZShareCollectItems(UIView *sheet,
     NSMutableArray<UIView *> *labels = [NSMutableArray array];
     NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:sheet];
     NSInteger guard = 0;
-    while (stack.count && guard < 2500) {
+    while (stack.count && guard < 12000) {
         UIView *v = stack.lastObject;
         [stack removeLastObject];
         guard++;
         if (WCZZShareTextOf(v).length) [labels addObject:v];
-        for (UIView *s in v.subviews) [stack addObject:s];
+        NSArray<UIView *> *subs = v.subviews;
+        for (NSInteger i = (NSInteger)subs.count - 1; i >= 0; i--) {
+            [stack addObject:subs[i]];
+        }
     }
 
     NSMutableDictionary<NSString *, UIView *> *inner = [NSMutableDictionary dictionary];
@@ -657,8 +681,8 @@ NSInteger WCZZShareMenuApplyToSheet(UIView *sheet) {
         }
         UIView *grid = WCZZShareCommonAncestor(allCells, sheet);
         BOOL compacted = NO;
-        if (grid) compacted = (WCZZShareCompactGrid(grid) > 0);
-        if (!compacted && grid.superview) compacted = (WCZZShareCompactGrid(grid.superview) > 0);
+        if (grid) compacted = (WCZZShareCompactRows(grid) > 0);
+        if (!compacted && grid.superview) compacted = (WCZZShareCompactRows(grid.superview) > 0);
 
         // ② 退化方案：逐行居中
         if (!compacted) {
@@ -677,11 +701,12 @@ void WCZZShareMenuHandleHost(UIViewController *host) {
     if (!host.isViewLoaded) return;
 
     UIView *root = host.view;
-    if (!WCZZShareMenuLooksLikeSheet(root)) return;
+    UIView *sheet = WCZZShareFindBestSheetIn(root);
+    if (!sheet) return;
 
     WCZZShareLastSheetTime = CACurrentMediaTime();
-    WCZZShareMenuCaptureFromSheet(root);
-    WCZZShareMenuApplyToSheet(root);
+    WCZZShareMenuCaptureFromSheet(sheet);
+    WCZZShareMenuApplyToSheet(sheet);
 }
 
 #pragma mark - 找面板 / 触发
@@ -706,18 +731,16 @@ UIView *WCZZShareMenuFindOpenSheet(void) {
         UIWindow *win = WCZZShareKeyWindow();
         windows = win ? @[win] : @[];
     }
+    UIView *best = nil;
+    CGFloat bestArea = CGFLOAT_MAX;
     for (UIWindow *win in [windows reverseObjectEnumerator]) {
-        NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:win];
-        NSInteger guard = 0;
-        while (stack.count && guard < 1800) {
-            UIView *v = stack.lastObject;
-            [stack removeLastObject];
-            guard++;
-            if (WCZZShareMenuLooksLikeSheet(v)) return v;
-            for (UIView *s in v.subviews) [stack addObject:s];
-        }
+        UIView *candidate = WCZZShareFindBestSheetIn(win);
+        if (!candidate) continue;
+        CGRect r = candidate.frame;
+        CGFloat area = CGRectGetWidth(r) * CGRectGetHeight(r);
+        if (area < bestArea) { bestArea = area; best = candidate; }
     }
-    return nil;
+    return best;
 }
 
 NSInteger WCZZShareMenuCaptureOpenSheet(void) {
