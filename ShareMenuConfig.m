@@ -283,6 +283,19 @@ BOOL WCZZShareMenuLooksLikeSheet(UIView *view) {
         return NO;
     }
 
+    // 类名兜底：分享面板真实类名（dump 实测 MMSrollActionSheetContainerView 等）
+    NSString *cls = WCZZShareClassName(view);
+    if ([cls containsString:@"ActionSheetContainer"] ||
+        [cls containsString:@"ScrollActionSheet"] ||
+        [cls containsString:@"ActionSheetView"]) {
+        CGRect cr = [view convertRect:view.bounds toView:view.window];
+        CGFloat ch = CGRectGetHeight(cr), cw = CGRectGetWidth(cr);
+        CGFloat sh = WCZZShareScreenH();
+        if (cw >= CGRectGetWidth(view.window.bounds) * 0.9 && ch >= 150.0 && ch <= sh * 0.9) {
+            return YES;
+        }
+    }
+
     CGFloat screenH = WCZZShareScreenH();
     CGRect r = [view convertRect:view.bounds toView:view.window];
     CGFloat h = CGRectGetHeight(r), w = CGRectGetWidth(r);
@@ -341,98 +354,6 @@ static UIView *WCZZShareRowContainerFor(UIView *inner, UIView *sheet, UIView **c
         p = p.superview;
     }
     return nil;
-}
-
-// 求一组视图的最低公共祖先（限定在 limit 之内）
-static UIView *WCZZShareCommonAncestor(NSArray<UIView *> *views, UIView *limit) {
-    if (views.count == 0) return nil;
-    UIView *candidate = views[0].superview;
-    while (candidate && candidate != limit) {
-        BOOL all = YES;
-        for (UIView *v in views) {
-            UIView *p = v;
-            BOOL inside = NO;
-            while (p) {
-                if (p == candidate) { inside = YES; break; }
-                p = p.superview;
-            }
-            if (!inside) { all = NO; break; }
-        }
-        if (all) return candidate;
-        candidate = candidate.superview;
-    }
-    return nil;
-}
-
-// 逐行收缩：保留「行」结构，只把被隐藏项留下的空隙挤掉，并让每行居中
-//   —— 分享面板是「两行」而不是均匀网格，按统一网格重排会把两行揉成一行
-static NSInteger WCZZShareCompactRows(UIView *container) {
-    if (!container) return 0;
-
-    // 收集可见的 item 格子
-    NSMutableArray<UIView *> *cells = [NSMutableArray array];
-    for (UIView *s in container.subviews) {
-        if (s.hidden || CGRectIsEmpty(s.frame)) continue;
-        if (!WCZZShareIsItemCell(s) &&
-            !(s.subviews.count >= 2 && CGRectGetWidth(s.frame) >= 24.0 &&
-              CGRectGetWidth(s.frame) <= 220.0 && CGRectGetHeight(s.frame) >= 24.0))
-            continue;
-        [cells addObject:s];
-    }
-    if (cells.count < 2) return 0;
-
-    // 按 y 分行（8pt 容差）
-    NSMutableArray<NSMutableArray<UIView *> *> *rows = [NSMutableArray array];
-    NSArray<UIView *> *byY = [cells sortedArrayUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
-        if (CGRectGetMinY(a.frame) < CGRectGetMinY(b.frame)) return NSOrderedAscending;
-        if (CGRectGetMinY(a.frame) > CGRectGetMinY(b.frame)) return NSOrderedDescending;
-        return NSOrderedSame;
-    }];
-    for (UIView *v in byY) {
-        NSMutableArray<UIView *> *row = rows.lastObject;
-        if (row && fabs(CGRectGetMinY(row[0].frame) - CGRectGetMinY(v.frame)) <= 8.0) {
-            [row addObject:v];
-        } else {
-            [rows addObject:[NSMutableArray arrayWithObject:v]];
-        }
-    }
-
-    CGFloat containerW = CGRectGetWidth(container.bounds);
-    if (containerW < 100.0) return 0;
-
-    NSInteger moved = 0;
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    for (NSMutableArray<UIView *> *row in rows) {
-        // 行内按 x 排序
-        [row sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
-            if (CGRectGetMinX(a.frame) < CGRectGetMinX(b.frame)) return NSOrderedAscending;
-            if (CGRectGetMinX(a.frame) > CGRectGetMinX(b.frame)) return NSOrderedDescending;
-            return NSOrderedSame;
-        }];
-        CGFloat w = CGRectGetWidth(row[0].frame);
-        CGFloat gap = 8.0;
-        if (row.count >= 2) {
-            CGFloat g = CGRectGetMinX(row[1].frame) - CGRectGetMaxX(row[0].frame);
-            if (g >= 0.0 && g <= 60.0) gap = g;
-        }
-        CGFloat total = w * (CGFloat)row.count + gap * (CGFloat)(row.count - 1);
-        CGFloat x = (containerW - total) / 2.0;
-        if (x < 0.0) x = 0.0;
-        CGFloat y = CGRectGetMinY(row[0].frame);
-        for (UIView *v in row) {
-            CGRect f = v.frame;
-            if (fabs(f.origin.x - x) > 0.5 || fabs(f.origin.y - y) > 0.5) {
-                f.origin.x = x;
-                f.origin.y = y;
-                v.frame = f;
-                moved++;
-            }
-            x = CGRectGetMaxX(f) + gap;
-        }
-    }
-    [CATransaction commit];
-    return moved;
 }
 
 // 行内居中重排（缝隙消失）
@@ -654,6 +575,59 @@ NSInteger WCZZShareMenuCaptureFromSheet(UIView *sheet) {
     return added;
 }
 
+// 逐父容器收缩：格子可能分属不同的「行容器」，按父视图分组，
+// 每组内挤掉被隐藏项留下的空隙并居中（保留行结构，不把两行揉成一行）。
+// （v9 调用点已改用本函数但 zip 里漏带了实现，此处按上一版 CompactRows 的行内算法补齐。）
+static NSInteger WCZZShareCompactRowParents(NSArray<UIView *> *cells) {
+    if (cells.count == 0) return 0;
+    NSMutableDictionary<NSValue *, NSMutableArray<UIView *> *> *byParent = [NSMutableDictionary dictionary];
+    for (UIView *c in cells) {
+        if (c.hidden || CGRectIsEmpty(c.frame)) continue;   // 已隐藏的格子不参与排版
+        UIView *p = c.superview;
+        if (!p) continue;
+        NSValue *key = [NSValue valueWithNonretainedObject:p];
+        if (!byParent[key]) byParent[key] = [NSMutableArray array];
+        [byParent[key] addObject:c];
+    }
+    NSInteger moved = 0;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (NSValue *key in byParent) {
+        UIView *parent = [key nonretainedObjectValue];
+        NSMutableArray<UIView *> *row = byParent[key];
+        if (!parent || row.count == 0) continue;
+        CGFloat containerW = CGRectGetWidth(parent.bounds);
+        if (containerW < 100.0) continue;
+        [row sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+            if (CGRectGetMinX(a.frame) < CGRectGetMinX(b.frame)) return NSOrderedAscending;
+            if (CGRectGetMinX(a.frame) > CGRectGetMinX(b.frame)) return NSOrderedDescending;
+            return NSOrderedSame;
+        }];
+        CGFloat w = CGRectGetWidth(row[0].frame);
+        CGFloat gap = 8.0;
+        if (row.count >= 2) {
+            CGFloat g = CGRectGetMinX(row[1].frame) - CGRectGetMaxX(row[0].frame);
+            if (g >= 0.0 && g <= 60.0) gap = g;
+        }
+        CGFloat total = w * (CGFloat)row.count + gap * (CGFloat)(row.count - 1);
+        CGFloat x = (containerW - total) / 2.0;
+        if (x < 0.0) x = 0.0;
+        CGFloat y = CGRectGetMinY(row[0].frame);
+        for (UIView *v in row) {
+            CGRect f = v.frame;
+            if (fabs(f.origin.x - x) > 0.5 || fabs(f.origin.y - y) > 0.5) {
+                f.origin.x = x;
+                f.origin.y = y;
+                v.frame = f;
+                moved++;
+            }
+            x = CGRectGetMaxX(f) + gap;
+        }
+    }
+    [CATransaction commit];
+    return moved;
+}
+
 NSInteger WCZZShareMenuApplyToSheet(UIView *sheet) {
     NSMutableDictionary<NSString *, UIView *> *cells = [NSMutableDictionary dictionary];
     NSMutableDictionary<NSString *, UIView *> *rows = [NSMutableDictionary dictionary];
@@ -679,10 +653,7 @@ NSInteger WCZZShareMenuApplyToSheet(UIView *sheet) {
             UIView *c = cells[title] ?: items[title];
             if (c) [allCells addObject:c];
         }
-        UIView *grid = WCZZShareCommonAncestor(allCells, sheet);
-        BOOL compacted = NO;
-        if (grid) compacted = (WCZZShareCompactRows(grid) > 0);
-        if (!compacted && grid.superview) compacted = (WCZZShareCompactRows(grid.superview) > 0);
+        BOOL compacted = (WCZZShareCompactRowParents(allCells) > 0);
 
         // ② 退化方案：逐行居中
         if (!compacted) {
