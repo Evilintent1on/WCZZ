@@ -22,6 +22,10 @@ void WCZZShareMenuSaveEntries(NSArray<NSDictionary *> * _Nullable entries);
 BOOL WCZZShareMenuIsTitleHidden(NSString *title);
 void WCZZShareMenuSetTitleHidden(NSString *title, BOOL hidden);
 
+/// 不抓「转发给」好友那一行（默认 YES）。
+BOOL WCZZShareMenuSkipsFirstRow(void);
+void WCZZShareMenuSetSkipsFirstRow(BOOL skip);
+
 /// Removes every stored entry (settings page “清空”).
 void WCZZShareMenuResetAll(void);
 

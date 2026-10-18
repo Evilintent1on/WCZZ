@@ -15,14 +15,20 @@
 
 - (instancetype)init {
     if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) {
-        self.title = @"分享面板项目";
+        self.title = @"分享面板";
     }
     return self;
 }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.tableView.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
+    if (@available(iOS 13.0, *)) {
+        self.tableView.backgroundColor = [UIColor systemGroupedBackgroundColor];
+        self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    } else {
+        self.tableView.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
+        self.view.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
+    }
     self.navigationItem.rightBarButtonItems = @[
         [[UIBarButtonItem alloc] initWithTitle:@"重新抓取" style:UIBarButtonItemStylePlain
                                         target:self action:@selector(onRescan)],
@@ -83,6 +89,10 @@
     [self.navigationController pushViewController:vc animated:YES];
 }
 
+- (void)onToggleSkipFirst:(UISwitch *)sw {
+    WCZZShareMenuSetSkipsFirstRow(sw.on);
+}
+
 - (void)onToggle:(UISwitch *)sw {
     UIView *v = sw;
     while (v && ![v isKindOfClass:[UITableViewCell class]]) v = v.superview;
@@ -103,22 +113,39 @@
 
 #pragma mark - 表格
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 1; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 2; }
 
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
+    if (section == 1) return 1;                 // 选项：不抓好友行
     return (NSInteger)_entries.count;
 }
 
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
+    if (section == 1) return @"抓取范围";
     return _entries.count ? @"开关：开 = 显示，关 = 隐藏" : nil;
 }
 
 - (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)section {
+    if (section == 1) return @"关掉「不抓好友行」后，重新抓取会把「转发给」里的好友也列进来。";
     if (_entries.count) return @"打开一次分享/转发面板会自动抓取新项目；改完立即生效。";
     return @"还没有抓到项目：先打开一次分享/转发面板，再回到这里。";
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (indexPath.section == 1) {
+        static NSString *optId = @"wczz.share.opt";
+        UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:optId];
+        if (!cell) {
+            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:optId];
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+            UISwitch *sw = [[UISwitch alloc] init];
+            [sw addTarget:self action:@selector(onToggleSkipFirst:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = sw;
+        }
+        cell.textLabel.text = @"不抓「转发给」好友行";
+        ((UISwitch *)cell.accessoryView).on = WCZZShareMenuSkipsFirstRow();
+        return cell;
+    }
     static NSString *cid = @"wczz.share.cell";
     UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:cid];
     if (!cell) {

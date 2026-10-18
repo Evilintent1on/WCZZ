@@ -4,26 +4,19 @@
 #import <objc/message.h>
 
 // ============================================================
-//  分享/转发面板项目：抓取 + 自定义隐藏
+//  分享/转发面板项目：抓取 + 自定义隐藏（v3）
 //
-//  面板出现的两种形态都要覆盖：
-//    A. 新控制器弹出   → UIViewController -viewDidAppear: 能感知
-//    B. 只是加在当前页面/窗口上的视图（实测这种最常见）→ 没有任何控制器回调
-//  所以除了 A，这里还做了两件事：
-//    · UIWindow -sendEvent: 钩子：用户点开面板后 0.25 秒扫一次（带防抖）
-//    · 2 秒兜底扫描（节点数与深度都有上限），防止某些路径不经过 sendEvent:
+//  v3 相对上一版的三处关键修正：
+//    ① 隐藏「外层布局格子」而不是内层包装 —— 内层藏了外层坑还在，就是「有缝隙」的原因；
+//       同时把同一行剩余格子**居中重排**（按原间距），缝隙消失。
+//    ② 不再抓「转发给」好友那一排：
+//       · 好友排是横向可滚动的 → 祖先里有横向滚动视图的格子跳过；
+//       · 再按 y 分带，若存在 ≥2 带，跳过最上面一带（好友排永远在最上）。
+//       可用 wczz.share.skip_first_row 关掉（默认开）。
+//    ③ 面板结构缓存照旧写 wczz.share.lastTree，抓取详情可在面板关掉后查看。
 //
-//  识别不依赖文字（文字只是加分项）：
-//    · 文字特征：同一视图里同时有「转发给…」和「取消」            → 直接认定
-//    · 结构特征：宽度 ≈ 满屏、高度 250~0.88屏、内部有 ≥4 个「图标+标题」格子 → 认定
-//  项目识别：从每个带文本的视图往上找「图标 + 标题」的一格（宽 40~150、高 40~190、≥2 子视图）。
-//  隐藏：命中就 hidden=YES，同排等大的格子按原间距重排（不留洞）。
-//
-//  诊断：每次抓到面板都会把结构缓存到 wczz.share.lastTree，
-//        「抓取详情」在面板关掉后依然能显示上次抓到的内容
-//        （面板是模态的，进设置页时它已经消失，不可能现场抓）。
-//
-//  存储：NSUserDefaults wczz.share.entries = @[ @{t: title, h: @(hidden), c: @(seen)} ]
+//  面板形态：可能是新控制器，也可能只是加在当前页面上的视图 → 三种触发都保留：
+//    UIViewController 回调 / UIWindow -sendEvent:（点击后 0.25s）/ 2 秒兜底扫描。
 // ============================================================
 
 NSString * const WCZZShareMenuTitleKey  = @"t";
@@ -33,6 +26,7 @@ NSString * const WCZZShareMenuSeenKey   = @"c";
 static NSString *const kWCZZShareStoreKey     = @"wczz.share.entries";
 static NSString *const kWCZZShareEnabledKey   = @"wczz.share.enabled";
 static NSString *const kWCZZShareReflowKey    = @"wczz.share.reflow";
+static NSString *const kWCZZShareSkipFirstKey = @"wczz.share.skip_first_row";
 static NSString *const kWCZZShareLastTreeKey  = @"wczz.share.lastTree";
 static NSString *const kWCZZShareLastTreeTime = @"wczz.share.lastTreeTime";
 
@@ -48,12 +42,15 @@ static BOOL WCZZShareFlag(NSString *key, BOOL fallback) {
 }
 
 BOOL WCZZShareMenuIsEnabled(void) { return WCZZShareFlag(kWCZZShareEnabledKey, YES); }
-
 void WCZZShareMenuSetEnabled(BOOL enabled) {
     [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kWCZZShareEnabledKey];
 }
-
 static BOOL WCZZShareReflowEnabled(void) { return WCZZShareFlag(kWCZZShareReflowKey, YES); }
+
+BOOL WCZZShareMenuSkipsFirstRow(void) { return WCZZShareFlag(kWCZZShareSkipFirstKey, YES); }
+void WCZZShareMenuSetSkipsFirstRow(BOOL skip) {
+    [[NSUserDefaults standardUserDefaults] setBool:skip forKey:kWCZZShareSkipFirstKey];
+}
 
 NSArray<NSDictionary *> *WCZZShareMenuLoadEntries(void) {
     NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
@@ -77,11 +74,8 @@ NSArray<NSDictionary *> *WCZZShareMenuLoadEntries(void) {
 
 void WCZZShareMenuSaveEntries(NSArray<NSDictionary *> *entries) {
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    if (entries.count == 0) {
-        [d removeObjectForKey:kWCZZShareStoreKey];
-    } else {
-        [d setObject:entries forKey:kWCZZShareStoreKey];
-    }
+    if (entries.count == 0) [d removeObjectForKey:kWCZZShareStoreKey];
+    else [d setObject:entries forKey:kWCZZShareStoreKey];
     [d synchronize];
 }
 
@@ -119,7 +113,7 @@ void WCZZShareMenuSetTitleHidden(NSString *title, BOOL hidden) {
 
 void WCZZShareMenuResetAll(void) { WCZZShareMenuSaveEntries(@[]); }
 
-#pragma mark - 视图工具
+#pragma mark - 基础工具
 
 static NSString *WCZZShareClassName(id obj) {
     if (!obj) return @"(nil)";
@@ -134,7 +128,6 @@ static NSString *WCZZShareFrameString(UIView *v) {
             r.size.width, r.size.height];
 }
 
-// 取任意控件上的文本：UILabel 快路径，其余用 KVC 兜底
 static NSString *WCZZShareTextOf(UIView *v) {
     if (!v) return nil;
     @try {
@@ -172,7 +165,6 @@ static void WCZZShareCollectTexts(UIView *v, NSInteger depth, NSMutableSet<NSStr
     for (UIView *s in v.subviews) WCZZShareCollectTexts(s, depth + 1, out);
 }
 
-// 「一格」：图标 + 标题
 static BOOL WCZZShareIsItemCell(UIView *v) {
     if (!v || v.hidden) return NO;
     CGRect r = v.frame;
@@ -187,7 +179,6 @@ static BOOL WCZZShareIsItemCell(UIView *v) {
     return hasIcon && hasText;
 }
 
-// 这一块里有多少个「一格」
 static NSInteger WCZZShareCountCells(UIView *root) {
     if (!root) return 0;
     NSInteger count = 0;
@@ -221,7 +212,6 @@ BOOL WCZZShareMenuLooksLikeSheet(UIView *view) {
     if (!view || view.hidden || view.alpha < 0.05) return NO;
     if (!view.window) return NO;
 
-    // ① 文字特征
     NSMutableSet<NSString *> *texts = [NSMutableSet set];
     WCZZShareCollectTexts(view, 0, texts);
     if (texts.count > 0) {
@@ -233,7 +223,6 @@ BOOL WCZZShareMenuLooksLikeSheet(UIView *view) {
         if (hasForward && hasCancel) return YES;
     }
 
-    // ② 结构特征
     CGFloat screenH = WCZZShareScreenH();
     CGRect r = [view convertRect:view.bounds toView:view.window];
     CGFloat h = CGRectGetHeight(r), w = CGRectGetWidth(r);
@@ -245,7 +234,7 @@ BOOL WCZZShareMenuLooksLikeSheet(UIView *view) {
     return WCZZShareCountCells(view) >= 4;
 }
 
-// 从文本视图往上找「一格」
+// 从文本视图往上找「一格」（内层：图标+标题）
 static UIView *WCZZShareContainerForView(UIView *label, UIView *sheetRoot) {
     if (!label) return nil;
     UIView *v = label;
@@ -253,19 +242,108 @@ static UIView *WCZZShareContainerForView(UIView *label, UIView *sheetRoot) {
         UIView *p = v.superview;
         if (!p || p == sheetRoot) break;
         if (WCZZShareIsItemCell(p)) return p;
-        CGRect r = p.frame;
-        BOOL cellSized = CGRectGetWidth(r) > 20.0 && CGRectGetWidth(r) < 150.0 &&
-                         CGRectGetHeight(r) > 20.0 && CGRectGetHeight(r) < 190.0;
-        if (cellSized && p.subviews.count >= 2) return p;
         v = p;
     }
     return nil;
 }
 
-NSDictionary<NSString *, UIView *> *WCZZShareMenuItemsInSheet(UIView *sheet) {
-    NSMutableDictionary<NSString *, UIView *> *out = [NSMutableDictionary dictionary];
-    if (!sheet) return out;
+// 这一格是否在「横向可滚动」的容器里（= 好友那一排）
+static BOOL WCZZShareInHorizontalScroller(UIView *v, UIView *sheet) {
+    UIView *p = v.superview;
+    NSInteger guard = 0;
+    while (p && p != sheet && guard++ < 8) {
+        if ([p isKindOfClass:[UIScrollView class]]) {
+            UIScrollView *sv = (UIScrollView *)p;
+            if (sv.contentSize.width > CGRectGetWidth(sv.bounds) + 8.0) return YES;
+        }
+        p = p.superview;
+    }
+    return NO;
+}
 
+// 找到「一行」容器：≥3 个子视图、高度一致、y 接近；返回该行，cellOut=这一行里的那个格子
+static UIView *WCZZShareRowContainerFor(UIView *inner, UIView *sheet, UIView **cellOut) {
+    if (cellOut) *cellOut = nil;
+    if (!inner) return nil;
+    UIView *cell = inner;
+    UIView *p = inner.superview;
+    NSInteger guard = 0;
+    while (p && p != sheet && guard++ < 6) {
+        NSArray<UIView *> *kids = p.subviews;
+        if (kids.count >= 3) {
+            CGFloat h0 = 0.0, y0 = 0.0;
+            NSInteger count = 0;
+            BOOL sameRow = YES;
+            for (UIView *k in kids) {
+                if (k.hidden || CGRectIsEmpty(k.frame)) continue;
+                if (count == 0) { h0 = CGRectGetHeight(k.frame); y0 = CGRectGetMinY(k.frame); }
+                count++;
+                if (fabs(CGRectGetHeight(k.frame) - h0) > 2.0 ||
+                    fabs(CGRectGetMinY(k.frame) - y0) > 2.0) { sameRow = NO; break; }
+            }
+            if (sameRow && count >= 3) {
+                if (cellOut) *cellOut = cell;
+                return p;
+            }
+        }
+        cell = p;
+        p = p.superview;
+    }
+    return nil;
+}
+
+// 行内居中重排（缝隙消失）
+static NSInteger WCZZShareReflowRowCentered(UIView *row) {
+    if (!row) return 0;
+    NSMutableArray<UIView *> *visible = [NSMutableArray array];
+    for (UIView *s in row.subviews) {
+        if (s.hidden || CGRectIsEmpty(s.frame)) continue;
+        [visible addObject:s];
+    }
+    if (visible.count == 0) return 0;
+
+    CGFloat w0 = CGRectGetWidth(visible[0].frame), h0 = CGRectGetHeight(visible[0].frame);
+    for (UIView *v in visible) {
+        if (fabs(CGRectGetWidth(v.frame) - w0) > 2.0 || fabs(CGRectGetHeight(v.frame) - h0) > 2.0) {
+            return 0;       // 不等大 → 不是网格行，别动
+        }
+    }
+    NSArray<UIView *> *sorted = [visible sortedArrayUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+        if (CGRectGetMinX(a.frame) < CGRectGetMinX(b.frame)) return NSOrderedAscending;
+        if (CGRectGetMinX(a.frame) > CGRectGetMinX(b.frame)) return NSOrderedDescending;
+        return NSOrderedSame;
+    }];
+    CGFloat gap = 8.0;
+    if (sorted.count >= 2) {
+        CGFloat g = CGRectGetMinX(sorted[1].frame) - CGRectGetMaxX(sorted[0].frame);
+        if (g >= 0.0 && g <= 40.0) gap = g;
+    }
+    CGFloat total = w0 * (CGFloat)sorted.count + gap * (CGFloat)(sorted.count - 1);
+    CGFloat x = (CGRectGetWidth(row.bounds) - total) / 2.0;
+    if (x < 0.0) x = 0.0;
+    CGFloat y = CGRectGetMinY(sorted[0].frame);
+
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (UIView *v in sorted) {
+        CGRect f = v.frame;
+        if (fabs(f.origin.x - x) > 0.5 || fabs(f.origin.y - y) > 0.5) {
+            f.origin.x = x;
+            f.origin.y = y;
+            v.frame = f;
+        }
+        x = CGRectGetMaxX(f) + gap;
+    }
+    [CATransaction commit];
+    return (NSInteger)sorted.count;
+}
+
+#pragma mark - 收集项目（含好友排过滤）
+
+// 返回 title -> 内层格子；outCells 里是同一格子的外层布局 cell（隐藏用）
+static NSDictionary<NSString *, UIView *> *WCZZShareCollectItems(UIView *sheet,
+                                                                NSMutableDictionary<NSString *, UIView *> *cellOut,
+                                                                NSMutableDictionary<NSString *, UIView *> *rowOut) {
     NSMutableArray<UIView *> *labels = [NSMutableArray array];
     NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:sheet];
     NSInteger guard = 0;
@@ -277,70 +355,70 @@ NSDictionary<NSString *, UIView *> *WCZZShareMenuItemsInSheet(UIView *sheet) {
         for (UIView *s in v.subviews) [stack addObject:s];
     }
 
+    NSMutableDictionary<NSString *, UIView *> *inner = [NSMutableDictionary dictionary];
     for (UIView *lb in labels) {
         NSString *t = WCZZShareTextOf(lb);
         if (![t isKindOfClass:[NSString class]] || !t.length) continue;
         NSString *trimmed = [t stringByTrimmingCharactersInSet:
                              [NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (!trimmed.length) continue;
-        if ([trimmed rangeOfString:@"转发给"].location != NSNotFound) continue;   // 分组标题
-        if ([trimmed isEqualToString:@"取消"]) continue;                          // 取消按钮
+        if ([trimmed rangeOfString:@"转发给"].location != NSNotFound) continue;
+        if ([trimmed isEqualToString:@"取消"]) continue;
         if (trimmed.length > 24) continue;
         UIView *container = WCZZShareContainerForView(lb, sheet);
         if (!container) continue;
-        if (!out[trimmed]) out[trimmed] = container;
+        if (WCZZShareInHorizontalScroller(container, sheet)) continue;   // 好友排（横向滚动）
+        if (!inner[trimmed]) inner[trimmed] = container;
     }
-    return out;
-}
 
-// 同排等大格子重排（只在明显是网格时动）
-static NSInteger WCZZShareReflowRow(UIView *container) {
-    if (!container) return 0;
-    NSMutableArray<UIView *> *visible = [NSMutableArray array];
-    for (UIView *s in container.subviews) {
-        if (s.hidden || CGRectIsEmpty(s.frame)) continue;
-        [visible addObject:s];
-    }
-    if (visible.count < 3) return 0;
-
-    CGFloat w0 = CGRectGetWidth(visible[0].frame), h0 = CGRectGetHeight(visible[0].frame);
-    for (UIView *v in visible) {
-        if (fabs(CGRectGetWidth(v.frame) - w0) > 2.0 || fabs(CGRectGetHeight(v.frame) - h0) > 2.0) {
-            return 0;
+    // 按 y 分带，跳过最上面一带（好友排兜底）
+    if (WCZZShareMenuSkipsFirstRow() && inner.count > 0) {
+        NSMutableArray<NSNumber *> *ys = [NSMutableArray array];
+        for (UIView *v in inner.allValues) {
+            CGRect r = [v convertRect:v.bounds toView:sheet];
+            [ys addObject:@(CGRectGetMinY(r))];
+        }
+        [ys sortUsingSelector:@selector(compare:)];
+        CGFloat firstY = ys.firstObject.doubleValue;
+        NSInteger bandCount = 0;
+        CGFloat lastBandY = -10000.0;
+        for (NSNumber *n in ys) {
+            if (fabs(n.doubleValue - lastBandY) > 8.0) { bandCount++; lastBandY = n.doubleValue; }
+        }
+        if (bandCount >= 2) {
+            NSMutableArray<NSString *> *drop = [NSMutableArray array];
+            for (NSString *title in inner) {
+                UIView *v = inner[title];
+                CGRect r = [v convertRect:v.bounds toView:sheet];
+                if (fabs(CGRectGetMinY(r) - firstY) <= 8.0) [drop addObject:title];
+            }
+            for (NSString *t in drop) [inner removeObjectForKey:t];
         }
     }
-    NSArray<UIView *> *sorted = [visible sortedArrayUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
-        if (CGRectGetMinX(a.frame) < CGRectGetMinX(b.frame)) return NSOrderedAscending;
-        if (CGRectGetMinX(a.frame) > CGRectGetMinX(b.frame)) return NSOrderedDescending;
-        return NSOrderedSame;
-    }];
-    CGFloat minX = CGRectGetMinX(sorted[0].frame);
-    CGFloat originY = CGRectGetMinY(sorted[0].frame);
-    CGFloat gap = 8.0;
-    if (sorted.count >= 2) {
-        CGFloat g = CGRectGetMinX(sorted[1].frame) - CGRectGetMaxX(sorted[0].frame);
-        if (g >= 0.0 && g <= 40.0) gap = g;
+
+    // 记录每个项目的「外层 cell」和「所在行」
+    for (NSString *title in inner) {
+        UIView *innerCell = inner[title];
+        UIView *cell = nil;
+        UIView *row = WCZZShareRowContainerFor(innerCell, sheet, &cell);
+        if (cell) cellOut[title] = cell;
+        if (row) rowOut[title] = row;
     }
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    CGFloat x = minX;
-    for (UIView *v in sorted) {
-        CGRect f = v.frame;
-        if (fabs(f.origin.x - x) > 0.5 || fabs(f.origin.y - originY) > 0.5) {
-            f.origin.x = x;
-            f.origin.y = originY;
-            v.frame = f;
-        }
-        x = CGRectGetMaxX(f) + gap;
-    }
-    [CATransaction commit];
-    return (NSInteger)sorted.count;
+    return inner;
 }
 
-#pragma mark - 抓取 / 应用 / 缓存结构
+NSDictionary<NSString *, UIView *> *WCZZShareMenuItemsInSheet(UIView *sheet) {
+    NSMutableDictionary<NSString *, UIView *> *scratchCell = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *, UIView *> *scratchRow = [NSMutableDictionary dictionary];
+    return WCZZShareCollectItems(sheet, scratchCell, scratchRow);
+}
+
+#pragma mark - 抓取 / 应用 / 缓存
 
 NSInteger WCZZShareMenuCaptureFromSheet(UIView *sheet) {
-    NSDictionary<NSString *, UIView *> *items = WCZZShareMenuItemsInSheet(sheet);
+    NSMutableDictionary<NSString *, UIView *> *cells = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *, UIView *> *rows = [NSMutableDictionary dictionary];
+    NSDictionary<NSString *, UIView *> *items = WCZZShareCollectItems(sheet, cells, rows);
     if (items.count == 0) return 0;
 
     NSMutableArray<NSDictionary *> *entries = [WCZZShareMenuLoadEntries() mutableCopy];
@@ -354,16 +432,15 @@ NSInteger WCZZShareMenuCaptureFromSheet(UIView *sheet) {
             added++;
         } else {
             NSMutableDictionary *item = [entries[(NSUInteger)idx] mutableCopy];
-            NSInteger seen = [item[WCZZShareMenuSeenKey] integerValue] + 1;
-            item[WCZZShareMenuSeenKey] = @(seen);
+            item[WCZZShareMenuSeenKey] = @([item[WCZZShareMenuSeenKey] integerValue] + 1);
             entries[(NSUInteger)idx] = item;
         }
     }
     if (added > 0) WCZZShareMenuSaveEntries(entries);
 
-    // 缓存结构（面板是模态的，进设置页时它已经不在了，只能看缓存）
+    // 缓存面板结构（面板关掉后「抓取详情」仍能看到）
     NSMutableString *tree = [NSMutableString string];
-    [tree appendFormat:@"面板 %@ %@  共 %lu 个可隐藏项\n\n",
+    [tree appendFormat:@"面板 %@ %@  共 %lu 项\n\n",
         WCZZShareClassName(sheet), WCZZShareFrameString(sheet), (unsigned long)items.count];
     NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:sheet];
     NSMutableArray<NSNumber *> *depths = [NSMutableArray arrayWithObject:@(0)];
@@ -391,27 +468,29 @@ NSInteger WCZZShareMenuCaptureFromSheet(UIView *sheet) {
     [dflt setObject:tree forKey:kWCZZShareLastTreeKey];
     [dflt setObject:@([[NSDate date] timeIntervalSince1970]) forKey:kWCZZShareLastTreeTime];
     [dflt synchronize];
-
     return added;
 }
 
 NSInteger WCZZShareMenuApplyToSheet(UIView *sheet) {
-    NSDictionary<NSString *, UIView *> *items = WCZZShareMenuItemsInSheet(sheet);
+    NSMutableDictionary<NSString *, UIView *> *cells = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *, UIView *> *rows = [NSMutableDictionary dictionary];
+    NSDictionary<NSString *, UIView *> *items = WCZZShareCollectItems(sheet, cells, rows);
     if (items.count == 0) return 0;
 
     NSInteger hidden = 0;
-    NSMutableSet<UIView *> *parents = [NSMutableSet set];
+    NSMutableSet<UIView *> *rowsToReflow = [NSMutableSet set];
     for (NSString *title in items) {
         if (!WCZZShareMenuIsTitleHidden(title)) continue;
-        UIView *container = items[title];
-        if (!container.hidden) {
-            container.hidden = YES;
+        UIView *target = cells[title] ?: items[title];     // 优先隐藏外层布局格子
+        if (!target.hidden) {
+            target.hidden = YES;
             hidden++;
         }
-        if (container.superview) [parents addObject:container.superview];
+        UIView *row = rows[title];
+        if (row) [rowsToReflow addObject:row];
     }
     if (hidden > 0 && WCZZShareReflowEnabled()) {
-        for (UIView *p in parents) WCZZShareReflowRow(p);
+        for (UIView *row in rowsToReflow) WCZZShareReflowRowCentered(row);
     }
     return hidden;
 }
@@ -429,7 +508,7 @@ void WCZZShareMenuHandleHost(UIViewController *host) {
     WCZZShareMenuApplyToSheet(root);
 }
 
-#pragma mark - 找面板 / 触发扫描
+#pragma mark - 找面板 / 触发
 
 static UIWindow *WCZZShareKeyWindow(void) {
     UIWindow *win = nil;
@@ -480,7 +559,6 @@ NSInteger WCZZShareMenuApplyOpenSheet(void) {
     return WCZZShareMenuApplyToSheet(sheet);
 }
 
-// 扫一次：找到面板就抓取 + 应用
 static void WCZZShareScanOnce(void) {
     if (!WCZZShareMenuIsEnabled()) return;
     UIView *sheet = WCZZShareMenuFindOpenSheet();
@@ -490,7 +568,6 @@ static void WCZZShareScanOnce(void) {
     WCZZShareMenuApplyToSheet(sheet);
 }
 
-// 防抖：0.25 秒内多次触发只扫一次
 static void WCZZShareScheduleScan(void) {
     static BOOL scheduled = NO;
     if (scheduled) return;
@@ -502,7 +579,6 @@ static void WCZZShareScheduleScan(void) {
     });
 }
 
-// UIWindow -sendEvent:（点击后就扫一次；不依赖任何控制器回调）
 static void (*WCZZShareOrigSendEvent)(id, SEL, UIEvent *);
 static void WCZZShareSendEvent(id self, SEL _cmd, UIEvent *event) {
     if (WCZZShareOrigSendEvent) WCZZShareOrigSendEvent(self, _cmd, event);
@@ -539,7 +615,6 @@ __attribute__((constructor)) static void WCZZShareMenuBootstrap(void) {
 
 NSString *WCZZShareMenuDebugDump(void) {
     NSMutableString *out = [NSMutableString string];
-
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
     NSString *cached = [d stringForKey:kWCZZShareLastTreeKey];
     NSNumber *cachedAt = [d objectForKey:kWCZZShareLastTreeTime];
@@ -557,23 +632,19 @@ NSString *WCZZShareMenuDebugDump(void) {
             [out appendFormat:@"下面是上次抓到的面板结构（%@）\n\n", [fmt stringFromDate:date]];
         }
     }
-
-    if (cached.length) {
-        [out appendString:cached];
-    } else if (!sheet) {
-        [out appendString:@"还没有抓到过面板。\n请先点图片右下角的「…」打开一次分享面板（停 1 秒），再回来点这里。\n"];
-    }
+    if (cached.length) [out appendString:cached];
+    else if (!sheet) [out appendString:@"还没有抓到过面板。\n请先打开一次分享面板（停 1 秒），再回来点这里。\n"];
 
     [out appendString:@"\n=== 已登记项目 ===\n"];
     NSArray<NSDictionary *> *entries = WCZZShareMenuLoadEntries();
-    if (entries.count == 0) {
-        [out appendString:@"（空）\n"];
-    } else {
+    if (entries.count == 0) [out appendString:@"（空）\n"];
+    else {
         for (NSDictionary *e in entries) {
             [out appendFormat:@"%@  %@  (见过 %@ 次)\n",
              [e[WCZZShareMenuHiddenKey] boolValue] ? @"隐藏" : @"显示",
              e[WCZZShareMenuTitleKey], e[WCZZShareMenuSeenKey]];
         }
     }
+    [out appendFormat:@"\n跳过好友行: %@\n", WCZZShareMenuSkipsFirstRow() ? @"是" : @"否"];
     return out;
 }

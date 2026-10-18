@@ -124,16 +124,16 @@ static id WCZZValue(id obj, NSString *key) {
         self.view.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
     }
 }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 2; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
-    if (section == 1) return 2;
     return 1;
 }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)section { return 28.0; }
 - (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section { return section == 0 ? 8.0 : 0.01; }
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
     if (section == 0) return @"红包";
-    return @"消息";
+    if (section == 1) return @"消息";
+    return @"面板";
 }
 - (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)section {
     return nil;   // 页脚会和最后一行重叠，说明文字放到行内了
@@ -151,11 +151,8 @@ static id WCZZValue(id obj, NSString *key) {
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else if (ip.section == 1 && ip.row == 0) {
         c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryNone;
-    } else if (ip.section == 1) {
-        c.textLabel.text=@"分享面板项目"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
-        c.detailTextLabel.text=[NSString stringWithFormat:@"已抓 %lu 项",
-                                (unsigned long)[WCZZShareMenuLoadEntries() count]];
-        c.detailTextLabel.font=[UIFont systemFontOfSize:12.0];
+    } else if (ip.section == 2) {
+        c.textLabel.text=@"分享面板"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     }
     return c;
 }
@@ -165,7 +162,7 @@ static id WCZZValue(id obj, NSString *key) {
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
     if (ip.section == 1 && ip.row == 0) [self.navigationController pushViewController:[MessageMenuSettingsController new] animated:YES];
-    if (ip.section == 1 && ip.row == 1) [self.navigationController pushViewController:[ShareMenuSettingsController new] animated:YES];
+    if (ip.section == 2 && ip.row == 0) [self.navigationController pushViewController:[ShareMenuSettingsController new] animated:YES];
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
 @end
