@@ -168,15 +168,20 @@ static void WCZZShareCollectTexts(UIView *v, NSInteger depth, NSMutableSet<NSStr
 static BOOL WCZZShareIsItemCell(UIView *v) {
     if (!v || v.hidden) return NO;
     CGRect r = v.frame;
-    if (CGRectGetWidth(r) < 40.0 || CGRectGetWidth(r) > 150.0) return NO;
-    if (CGRectGetHeight(r) < 40.0 || CGRectGetHeight(r) > 190.0) return NO;
+    if (CGRectGetWidth(r) < 24.0 || CGRectGetWidth(r) > 220.0) return NO;
+    if (CGRectGetHeight(r) < 24.0 || CGRectGetHeight(r) > 240.0) return NO;
     if (v.subviews.count < 2) return NO;
     BOOL hasIcon = NO, hasText = NO;
     for (UIView *g in v.subviews) {
-        if ([g isKindOfClass:[UIImageView class]]) hasIcon = YES;
         if (WCZZShareTextOf(g).length) hasText = YES;
+        // 图标不一定是 UIImageView：可能是 UIButton / 有背景色 / 有 layer 内容
+        if ([g isKindOfClass:[UIImageView class]] || [g isKindOfClass:[UIButton class]] ||
+            g.layer.contents != nil ||
+            (g.backgroundColor && CGColorGetAlpha(g.backgroundColor.CGColor) > 0.01)) {
+            hasIcon = YES;
+        }
     }
-    return hasIcon && hasText;
+    return hasText && hasIcon;
 }
 
 static NSInteger WCZZShareCountCells(UIView *root) {
@@ -238,10 +243,15 @@ BOOL WCZZShareMenuLooksLikeSheet(UIView *view) {
 static UIView *WCZZShareContainerForView(UIView *label, UIView *sheetRoot) {
     if (!label) return nil;
     UIView *v = label;
-    for (NSInteger i = 0; i < 6 && v; i++) {
+    for (NSInteger i = 0; i < 7 && v; i++) {
         UIView *p = v.superview;
         if (!p || p == sheetRoot) break;
         if (WCZZShareIsItemCell(p)) return p;
+        // ★ 宽松兜底（v2 有、v3 被我删掉 → 导致整版抓不到）：尺寸像一格 + ≥2 个子视图就认
+        CGRect r = p.frame;
+        BOOL cellSized = CGRectGetWidth(r) >= 24.0 && CGRectGetWidth(r) <= 220.0 &&
+                         CGRectGetHeight(r) >= 24.0 && CGRectGetHeight(r) <= 240.0;
+        if (cellSized && p.subviews.count >= 2) return p;
         v = p;
     }
     return nil;
@@ -392,7 +402,26 @@ static NSDictionary<NSString *, UIView *> *WCZZShareCollectItems(UIView *sheet,
                 CGRect r = [v convertRect:v.bounds toView:sheet];
                 if (fabs(CGRectGetMinY(r) - firstY) <= 8.0) [drop addObject:title];
             }
-            for (NSString *t in drop) [inner removeObjectForKey:t];
+            // 保护：只有「丢掉的是少数」才执行，避免配置误判把整排都丢掉
+            if (drop.count > 0 && drop.count <= (NSInteger)inner.count * 7 / 10) {
+                for (NSString *t in drop) [inner removeObjectForKey:t];
+            }
+        }
+    }
+
+    // ★ 防回归兜底：上面两条过滤若把项目全滤没了，就退回不过滤再收一遍
+    if (inner.count == 0) {
+        for (UIView *lb in labels) {
+            NSString *t = WCZZShareTextOf(lb);
+            if (![t isKindOfClass:[NSString class]] || !t.length) continue;
+            NSString *trimmed = [t stringByTrimmingCharactersInSet:
+                                 [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            if (!trimmed.length || trimmed.length > 24) continue;
+            if ([trimmed rangeOfString:@"转发给"].location != NSNotFound) continue;
+            if ([trimmed isEqualToString:@"取消"]) continue;
+            UIView *container = WCZZShareContainerForView(lb, sheet);
+            if (!container) continue;
+            if (!inner[trimmed]) inner[trimmed] = container;
         }
     }
 
