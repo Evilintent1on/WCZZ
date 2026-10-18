@@ -115,12 +115,42 @@ static NSString *WCZZShareFrameString(UIView *v) {
             r.size.width, r.size.height];
 }
 
+// 取任意控件上的文本：UILabel 走快路径，其余用 KVC 兜底
+// （微信有些面板的标题不是 UILabel，而是自带 text 属性的自绘控件）
+static NSString *WCZZShareTextOf(UIView *v) {
+    if (!v) return nil;
+    @try {
+        if ([v isKindOfClass:[UILabel class]]) {
+            NSString *t = ((UILabel *)v).text;
+            if ([t isKindOfClass:[NSString class]] && t.length) return t;
+        }
+        if ([v isKindOfClass:[UIButton class]]) {
+            NSString *t = [(UIButton *)v titleForState:UIControlStateNormal];
+            if ([t isKindOfClass:[NSString class]] && t.length) return t;
+        }
+        static NSArray<NSString *> *keys = nil;
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            keys = @[@"text", @"attributedText", @"title", @"menuTitle", @"itemTitle"];
+        });
+        for (NSString *key in keys) {
+            SEL sel = NSSelectorFromString(key);
+            if (![v respondsToSelector:sel]) continue;
+            id val = [v valueForKey:key];
+            if ([val isKindOfClass:[NSString class]] && [(NSString *)val length]) return val;
+            if ([val isKindOfClass:[NSAttributedString class]]) {
+                NSString *s = [(NSAttributedString *)val string];
+                if (s.length) return s;
+            }
+        }
+    } @catch (__unused NSException *e) {}
+    return nil;
+}
+
 static void WCZZShareCollectTexts(UIView *v, NSInteger depth, NSMutableSet<NSString *> *out) {
     if (!v || depth > 8 || out.count > 400) return;
-    if ([v isKindOfClass:[UILabel class]]) {
-        NSString *t = ((UILabel *)v).text;
-        if ([t isKindOfClass:[NSString class]] && t.length) [out addObject:t];
-    }
+    NSString *t = WCZZShareTextOf(v);
+    if (t.length) [out addObject:t];
     for (UIView *s in v.subviews) WCZZShareCollectTexts(s, depth + 1, out);
 }
 
@@ -139,7 +169,7 @@ BOOL WCZZShareMenuLooksLikeSheet(UIView *view) {
 }
 
 // 从标题 label 往上找「图标 + 标题」的一格
-static UIView *WCZZShareContainerForLabel(UILabel *label, UIView *sheetRoot) {
+static UIView *WCZZShareContainerForView(UIView *label, UIView *sheetRoot) {
     if (!label) return nil;
     UIView *v = label;
     for (NSInteger i = 0; i < 6 && v; i++) {
@@ -165,26 +195,26 @@ NSDictionary<NSString *, UIView *> *WCZZShareMenuItemsInSheet(UIView *sheet) {
     NSMutableDictionary<NSString *, UIView *> *out = [NSMutableDictionary dictionary];
     if (!sheet) return out;
 
-    NSMutableArray<UILabel *> *labels = [NSMutableArray array];
+    NSMutableArray<UIView *> *labels = [NSMutableArray array];
     NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:sheet];
     NSInteger guard = 0;
     while (stack.count && guard < 2000) {
         UIView *v = stack.lastObject;
         [stack removeLastObject];
         guard++;
-        if ([v isKindOfClass:[UILabel class]]) [labels addObject:(UILabel *)v];
+        if (WCZZShareTextOf(v).length) [labels addObject:v];
         for (UIView *s in v.subviews) [stack addObject:s];
     }
 
-    for (UILabel *lb in labels) {
-        NSString *t = lb.text;
+    for (UIView *lb in labels) {
+        NSString *t = WCZZShareTextOf(lb);
         if (![t isKindOfClass:[NSString class]] || !t.length) continue;
         NSString *trimmed = [t stringByTrimmingCharactersInSet:
                              [NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (!trimmed.length) continue;
         if ([trimmed rangeOfString:@"转发给"].location != NSNotFound) continue;   // 分组标题
         if ([trimmed isEqualToString:@"取消"]) continue;                          // 取消按钮
-        UIView *container = WCZZShareContainerForLabel(lb, sheet);
+        UIView *container = WCZZShareContainerForView(lb, sheet);
         if (!container) continue;
         if (!out[trimmed]) out[trimmed] = container;
     }
@@ -285,6 +315,45 @@ NSInteger WCZZShareMenuApplyToSheet(UIView *sheet) {
 static CFAbsoluteTime WCZZShareLastSheetTime = 0;
 CFAbsoluteTime WCZZShareMenuLastActivity(void) { return WCZZShareLastSheetTime; }
 
+static UIWindow *WCZZShareKeyWindow(void);
+
+// ---- 自动扫描 ----
+// 有些分享面板不是「新的控制器出现」，而是直接挂到当前页面/窗口上的视图，
+// 那样 UIViewController 的回调根本不会触发。这里用一个很便宜的签名判断：
+// 每 0.5 秒看一次 key window 的直接子视图「数量 + 最后一个的类名」，
+// 只要没变化就完全不做事；变了才扫一遍找面板。
+static NSUInteger WCZZShareSigCount = (NSUInteger)-1;
+static NSString *WCZZShareSigClass = nil;
+
+static void WCZZShareAutoScanTick(void) {
+    if (!WCZZShareMenuIsEnabled()) return;
+    UIWindow *win = WCZZShareKeyWindow();
+    if (!win) return;
+
+    NSUInteger count = win.subviews.count;
+    NSString *last = count ? WCZZShareClassName(win.subviews.lastObject) : @"";
+    if (count == WCZZShareSigCount && [last isEqualToString:WCZZShareSigClass ?: @""]) return;
+    WCZZShareSigCount = count;
+    WCZZShareSigClass = last;
+
+    UIView *sheet = WCZZShareMenuFindOpenSheet();
+    if (!sheet) return;
+    WCZZShareLastSheetTime = CACurrentMediaTime();
+    WCZZShareMenuCaptureFromSheet(sheet);
+    WCZZShareMenuApplyToSheet(sheet);
+}
+
+__attribute__((constructor)) static void WCZZShareMenuBootstrap(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [NSTimer scheduledTimerWithTimeInterval:0.5
+                                        repeats:YES
+                                          block:^(NSTimer *timer) {
+            WCZZShareAutoScanTick();
+        }];
+    });
+}
+
 void WCZZShareMenuHandleHost(UIViewController *host) {
     if (!WCZZShareMenuIsEnabled() || !host) return;
     if (![host isKindOfClass:[UIViewController class]]) return;
@@ -314,16 +383,25 @@ static UIWindow *WCZZShareKeyWindow(void) {
 }
 
 UIView *WCZZShareMenuFindOpenSheet(void) {
-    UIWindow *win = WCZZShareKeyWindow();
-    if (!win) return nil;
-    NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:win];
-    NSInteger guard = 0;
-    while (stack.count && guard < 1200) {
-        UIView *v = stack.lastObject;
-        [stack removeLastObject];
-        guard++;
-        if (WCZZShareMenuLooksLikeSheet(v)) return v;
-        for (UIView *s in v.subviews) [stack addObject:s];
+    NSArray<UIWindow *> *windows = nil;
+    @try {
+        windows = [UIApplication sharedApplication].windows;
+    } @catch (__unused NSException *e) {}
+    if (windows.count == 0) {
+        UIWindow *win = WCZZShareKeyWindow();
+        windows = win ? @[win] : @[];
+    }
+    // 后加的窗口在上面，先扫
+    for (UIWindow *win in [windows reverseObjectEnumerator]) {
+        NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:win];
+        NSInteger guard = 0;
+        while (stack.count && guard < 1500) {
+            UIView *v = stack.lastObject;
+            [stack removeLastObject];
+            guard++;
+            if (WCZZShareMenuLooksLikeSheet(v)) return v;
+            for (UIView *s in v.subviews) [stack addObject:s];
+        }
     }
     return nil;
 }
