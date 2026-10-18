@@ -1,4 +1,7 @@
 #import "ShareMenuConfig.h"
+#import <QuartzCore/QuartzCore.h>
+#import <objc/runtime.h>
+#import <objc/message.h>
 
 // ============================================================
 //  分享/转发面板项目：抓取 + 自定义隐藏
