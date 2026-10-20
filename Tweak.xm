@@ -3,8 +3,6 @@
 #import "MessageMenuConfig.h"
 #import "MessageMenuBackup.h"
 #import "MessageMenuSettingsController.h"
-#import "ShareMenuConfig.h"
-#import "ShareMenuSettingsController.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 
@@ -124,7 +122,7 @@ static id WCZZValue(id obj, NSString *key) {
         self.view.backgroundColor = [UIColor colorWithRed:0.95 green:0.95 blue:0.97 alpha:1.0];
     }
 }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 3; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return 2; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
     return 1;
 }
@@ -132,8 +130,7 @@ static id WCZZValue(id obj, NSString *key) {
 - (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)section { return section == 0 ? 8.0 : 0.01; }
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)section {
     if (section == 0) return @"红包";
-    if (section == 1) return @"消息";
-    return @"面板";
+    return @"消息";
 }
 - (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)section {
     return nil;   // 页脚会和最后一行重叠，说明文字放到行内了
@@ -151,9 +148,6 @@ static id WCZZValue(id obj, NSString *key) {
         [NSLayoutConstraint activateConstraints:@[[sw.trailingAnchor constraintEqualToAnchor:c.contentView.trailingAnchor constant:-32],[sw.centerYAnchor constraintEqualToAnchor:c.contentView.centerYAnchor]]];
     } else if (ip.section == 1 && ip.row == 0) {
         c.textLabel.text=@"长按菜单"; c.accessoryType=UITableViewCellAccessoryNone;
-    } else if (ip.section == 2) {
-        c.textLabel.text=@"分享面板"; c.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
-    }
     return c;
 }
 - (void)wczzMain:(UISwitch *)sw {
@@ -162,7 +156,6 @@ static id WCZZValue(id obj, NSString *key) {
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
     if (ip.section == 1 && ip.row == 0) [self.navigationController pushViewController:[MessageMenuSettingsController new] animated:YES];
-    if (ip.section == 2 && ip.row == 0) [self.navigationController pushViewController:[ShareMenuSettingsController new] animated:YES];
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
 @end
@@ -645,38 +638,12 @@ static NSArray *WCZZProcessControllerItems(NSArray *items, UIResponder *responde
 %end
 %end
 
-#pragma mark - Share / forward sheet customization
-
-%group WCZZShareMenuHooks
-
-// 分享/转发面板：出现就抓取 + 按设置隐藏；布局回调里在 5 秒内补做一次
-%hook UIViewController
-
-- (void)viewDidAppear:(BOOL)animated {
-    %orig;
-    WCZZShareMenuHandleHost(self);
-}
-
-- (void)viewDidLayoutSubviews {
-    %orig;
-    if (!WCZZShareMenuIsEnabled()) return;
-    if (CACurrentMediaTime() - WCZZShareMenuLastActivity() > 5.0) return;
-    if (WCZZShareMenuLooksLikeSheet(self.view)) {
-        WCZZShareMenuCaptureFromSheet(self.view);
-        WCZZShareMenuApplyToSheet(self.view);
-    }
-}
-
-%end
-
-%end
 
 #pragma mark - Plugin registration / delayed hook installation
 
 static BOOL WCZZRegistered = NO;
 static BOOL WCZZRedHooksStarted = NO;
 static BOOL WCZZMenuHooksStarted = NO;
-static BOOL WCZZShareMenuHooksStarted = NO;
 static NSInteger WCZZInstallAttempts = 0;
 
 static void WCZZRegisterPlugin(void) {
@@ -712,11 +679,6 @@ static void WCZZInstallHooksWhenReady(void) {
             %init(WCZZMenuHooks);
             WCZZMenuHooksStarted = YES;
             WCZZLog(@"menu hooks installed");
-        }
-        if (!WCZZShareMenuHooksStarted) {
-            %init(WCZZShareMenuHooks);
-            WCZZShareMenuHooksStarted = YES;
-            WCZZLog(@"share menu hooks installed");
         }
         WCZZRegisterPlugin();
         if ((!WCZZRedHooksStarted || !WCZZMenuHooksStarted || !WCZZRegistered) && WCZZInstallAttempts++ < 60) {
